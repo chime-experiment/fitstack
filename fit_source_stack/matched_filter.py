@@ -1,8 +1,15 @@
+"""Early version of the analysis that used a matched filter approach.
+
+Both the data and mocks are convolved with a template.  The distribution
+of values observed in the convolved mocks is fit to a Gaussian and used to 
+determine the significance of the largest excursion observed in the convolved data.
+"""
+
 import numpy as np
+import scipy.stats
+from scipy.optimize import curve_fit
 
-from ch_util import cal_utils
-from ch_util import tools
-
+from draco.util import tools
 from draco.core import containers
 
 
@@ -22,6 +29,187 @@ def _apply_shift(arr, freq, shift):
     phase_shift = np.exp(-2.0j * np.pi * tau * offset)
 
     return np.fft.irfft(np.fft.rfft(arr, axis=-1) * phase_shift, axis=-1)
+
+
+def fit_histogram(
+    arr,
+    bins="auto",
+    rng=None,
+    no_weight=False,
+    test_normal=False,
+    return_histogram=False,
+):
+    """
+    Fit a gaussian to a histogram of the data.
+
+    Parameters
+    ----------
+    arr : np.ndarray
+        1D array containing the data.
+        Arrays with more than one dimension are flattened.
+    bins : int or sequence of scalars or str
+        - If `bins` is an int, it defines the number of equal-width bins in `rng`.
+        - If `bins` is a sequence, it defines a monotonically increasing array of
+          bin edges, including the rightmost edge, allowing for non-uniform bin widths.
+        - If `bins` is a string, it defines a method for computing the bins.
+    rng : (float, float)
+        The lower and upper range of the bins.  If not provided, then the range spans
+        the minimum to maximum value of `arr`.
+    no_weight : bool
+        Give equal weighting to each histogram bin.  Otherwise use proper weights
+        based on number of counts observed in each bin.
+    test_normal : bool
+        Apply the Shapiro-Wilk and Anderson-Darling tests for normality to the data.
+    return_histogram : bool
+        Return the histogram.  Otherwise return only the best fit parameters and
+        test statistics.
+
+    Returns
+    -------
+    results: dict
+        Dictionary containing the following fields:
+    indmin : int
+        Only bins whose index is greater than indmin were included in the fit.
+    indmax : int
+        Only bins whose index is less than indmax were included in the fit.
+    xmin : float
+        The data value corresponding to the centre of the `indmin` bin.
+    xmax : float
+        The data value corresponding to the centre of the `indmax` bin.
+    par: [float, float, float]
+        The parameters of the fit, ordered as [peak, mu, sigma].
+    chisq: float
+        The chi-squared of the fit.
+    ndof : int
+        The number of degrees of freedom of the fit.
+    pte : float
+        The probability to observe the chi-squared of the fit.
+
+    If `return_histogram` is True, then `results` will also contain
+    the following fields:
+
+        bin_centre : np.ndarray
+            The bin centre of the histogram.
+        bin_count : np.ndarray
+            The bin counts of the histogram.
+
+    If `test_normal` is True, then `results` will also contain the following fields:
+
+        shapiro : dict
+            stat : float
+                The Shapiro-Wilk test statistic.
+            pte : float
+                The probability to observe `stat` if the data were
+                drawn from a gaussian.
+        anderson : dict
+            stat : float
+                The Anderson-Darling test statistic.
+            critical : list of float
+                The critical values of the test statistic.
+            alpha : list of float
+                The significance levels corresponding to each critical value.
+            past : list of bool
+                Boolean indicating if the data passes the test for each critical value.
+    """
+    # Make sure the data is 1D
+    data = np.ravel(arr)
+
+    # Histogram the data
+    count, xbin = np.histogram(data, bins=bins, range=rng)
+    cbin = 0.5 * (xbin[0:-1] + xbin[1:])
+
+    cbin = cbin.astype(np.float64)
+    count = count.astype(np.float64)
+
+    # Form initial guess at parameter values using median and MAD
+    nparams = 3
+    par0 = np.zeros(nparams, dtype=np.float64)
+    par0[0] = np.max(count)
+    par0[1] = np.median(data)
+    par0[2] = 1.48625 * np.median(np.abs(data - par0[1]))
+
+    # Find the first zero points on either side of the median
+    cont = True
+    indmin = np.argmin(np.abs(cbin - par0[1]))
+    while cont:
+        indmin -= 1
+        cont = (count[indmin] > 0.0) and (indmin > 0)
+    indmin += count[indmin] == 0.0
+
+    cont = True
+    indmax = np.argmin(np.abs(cbin - par0[1]))
+    while cont:
+        indmax += 1
+        cont = (count[indmax] > 0.0) and (indmax < (len(count) - 1))
+    indmax -= count[indmax] == 0.0
+
+    # Restrict range of fit to between zero points
+    x = cbin[indmin : indmax + 1]
+    y = count[indmin : indmax + 1]
+    yerr = np.sqrt(y * (1.0 - y / np.sum(y)))
+
+    sigma = None if no_weight else yerr
+
+    # Require positive values of amp and sigma
+    bnd = (np.array([0.0, -np.inf, 0.0]), np.array([np.inf, np.inf, np.inf]))
+
+    # Define the fitting function
+    def gauss(x, peak, mu, sigma):
+        return peak * np.exp(-((x - mu) ** 2) / (2.0 * sigma ** 2))
+
+    # Perform the fit
+    par, var_par = curve_fit(
+        gauss,
+        cbin[indmin : indmax + 1],
+        count[indmin : indmax + 1],
+        p0=par0,
+        sigma=sigma,
+        absolute_sigma=(not no_weight),
+        bounds=bnd,
+        method="trf",
+    )
+
+    # Calculate quality of fit
+    chisq = np.sum(((y - gauss(x, *par)) / yerr) ** 2)
+    ndof = np.size(y) - nparams
+    pte = 1.0 - scipy.stats.chi2.cdf(chisq, ndof)
+
+    # Store results in dictionary
+    results_dict = {}
+    results_dict["indmin"] = indmin
+    results_dict["indmax"] = indmax
+    results_dict["xmin"] = cbin[indmin]
+    results_dict["xmax"] = cbin[indmax]
+    results_dict["par"] = par
+    results_dict["chisq"] = chisq
+    results_dict["ndof"] = ndof
+    results_dict["pte"] = pte
+
+    if return_histogram:
+        results_dict["bin_centre"] = cbin
+        results_dict["bin_count"] = count
+
+    # If requested, test normality of the main distribution
+    if test_normal:
+        flag = (data > cbin[indmin]) & (data < cbin[indmax])
+        shap_stat, shap_pte = scipy.stats.shapiro(data[flag])
+
+        results_dict["shapiro"] = {}
+        results_dict["shapiro"]["stat"] = shap_stat
+        results_dict["shapiro"]["pte"] = shap_pte
+
+        ander_stat, ander_crit, ander_signif = scipy.stats.anderson(
+            data[flag], dist="norm"
+        )
+
+        results_dict["anderson"] = {}
+        results_dict["anderson"]["stat"] = ander_stat
+        results_dict["anderson"]["critical"] = ander_crit
+        results_dict["anderson"]["alpha"] = ander_signif
+        results_dict["anderson"]["pass"] = ander_stat < ander_crit
+
+    # Return dictionary
+    return results_dict
 
 
 def convolve_template(data, template, pp=None, weight=None, max_df=6.0, offset=None):
