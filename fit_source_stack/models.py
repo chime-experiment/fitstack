@@ -116,10 +116,9 @@ class SST(Model):
 
     _name = "scaled_shifted_template"
 
-    param_name = ['amp', 'offset']
+    param_name = ["amp", "offset"]
 
-    boundary = {'amp':    [0.0, 4.0],
-                'offset': [-1.0, 1.0]}
+    boundary = {"amp": [0.0, 4.0], "offset": [-1.0, 1.0]}
 
     def model(self, theta, freq=None, transfer=None, template=None):
         """Evaluate the model consisting of a scaled and shifted template.
@@ -171,7 +170,7 @@ class SST(Model):
 
         size = freq.size + transfer.size - 1
 
-        fsize = next_fast_len(int(size))#, True)
+        fsize = next_fast_len(int(size))  # , True)
         fslice = slice(0, int(size))
 
         # Evaluate the model
@@ -181,12 +180,12 @@ class SST(Model):
         df = np.abs(freq[1] - freq[0]) * 1e6
         tau = np.fft.rfftfreq(fsize, d=df) * 1e6
 
-        shift = np.exp(-2.0J * np.pi * tau * offset)
+        shift = np.exp(-2.0j * np.pi * tau * offset)
 
         # Apply the transfer function and shift to the model
-        tmodel = np.fft.irfft(np.fft.rfft(model, fsize) *
-                              np.fft.rfft(transfer, fsize) *
-                              shift, fsize)[fslice].real
+        tmodel = np.fft.irfft(
+            np.fft.rfft(model, fsize) * np.fft.rfft(transfer, fsize) * shift, fsize
+        )[fslice].real
 
         return _centered(tmodel, freq.size)
 
@@ -196,11 +195,9 @@ class Exponential(Model):
 
     _name = "exponential"
 
-    param_name = ['amp', 'scale', 'offset']
+    param_name = ["amp", "scale", "offset"]
 
-    boundary = {'amp':    [0.0, 500.0],
-                'scale':  [0.1, 10.0],
-                'offset': [-1.0, 1.0]}
+    boundary = {"amp": [0.0, 500.0], "scale": [0.1, 10.0], "offset": [-1.0, 1.0]}
 
     def model(self, theta, freq=None, transfer=None):
         """Evaluate the exponential model.
@@ -242,7 +239,7 @@ class Exponential(Model):
 
         size = freq.size + transfer.size - 1
 
-        fsize = next_fast_len(int(size))#, True)
+        fsize = next_fast_len(int(size))  # , True)
         fslice = slice(0, int(size))
 
         # Evaluate the model
@@ -252,12 +249,11 @@ class Exponential(Model):
         df = np.abs(freq[1] - freq[0]) * 1e6
         tau = np.fft.rfftfreq(fsize, d=df) * 1e6
 
-        shift = np.exp(-2.0J * np.pi * tau * offset)
+        shift = np.exp(-2.0j * np.pi * tau * offset)
 
         # Apply the transfer function and shift to the model
-        tmodel = np.fft.irfft(np.fft.rfft(model, fsize) *
-                              np.fft.rfft(transfer, fsize) *
-                              shift, fsize)[fslice].real
+        tmodel = np.fft.irfft(
+            np.fft.rfft(model, fsize) * np.fft.rfft(transfer, fsize) * shift, fsize
+        )[fslice].real
 
         return _centered(tmodel, freq.size)
-

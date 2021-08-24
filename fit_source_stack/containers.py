@@ -138,13 +138,13 @@ class MCMCFit(ContainerBase):
         """
 
         if isinstance(pol, str):
-            pp = list(self.index_map['pol']).index(pol)
+            pp = list(self.index_map["pol"]).index(pol)
         else:
             pp = pol
 
         slc = self.slice_chain(pp)
 
-        samples = self.datasets['chain'][pp, slc, :, :]
+        samples = self.datasets["chain"][pp, slc, :, :]
 
         if flat:
             samples = samples.reshape(-1, samples.shape[-1])
@@ -172,11 +172,11 @@ class MCMCFit(ContainerBase):
         """
 
         if isinstance(pol, str):
-            pp = list(self.index_map['pol']).index(pol)
+            pp = list(self.index_map["pol"]).index(pol)
         else:
             pp = pol
 
-        tau = int(np.max(self.datasets['autocorr_time'][pp]))
+        tau = int(np.max(self.datasets["autocorr_time"][pp]))
         thin = tau // 2
         discard = tau * 10
 
@@ -185,17 +185,17 @@ class MCMCFit(ContainerBase):
     @property
     def minimum_chisq(self):
         """Return the minimum chi-squared."""
-        return np.min(self.datasets['chisq'][:], axis=(-2, -1))
+        return np.min(self.datasets["chisq"][:], axis=(-2, -1))
 
     @property
     def nstep(self):
         """Return the total number of steps taken."""
-        return self.index_map['step'].size
+        return self.index_map["step"].size
 
     @property
     def ndof(self):
         """Return the number of degrees of freedom."""
-        return np.sum(self.datasets['flag'][:]) - self.index_map['param'].size
+        return np.sum(self.datasets["flag"][:]) - self.index_map["param"].size
 
 
 class MCMCFit1D(MCMCFit, StackSet1D):

@@ -9,20 +9,34 @@ from . import containers
 from . import utils
 from . import models
 
-GUESS = {'amp': 1.0,
-         'scale': 0.7,
-         'offset': 0.0}
+GUESS = {"amp": 1.0, "scale": 0.7, "offset": 0.0}
 
-MODEL_LOOKUP = {"exponential": models.Exponential,
-                "scaled_shifted_template": models.SST}
+MODEL_LOOKUP = {
+    "exponential": models.Exponential,
+    "scaled_shifted_template": models.SST,
+}
 
 PERCENTILE = [2.5, 16, 50, 84, 97.5]
 
 
 # main script
-def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=False, invert_cov=True,
-                      model_name='exp_model', scale=1e6, nwalker=32, nsample=15000,
-                      max_freq=None, flag_before=True, normalize_template=False, mean_subtract=True, quiet=False):
+def process_data_mcmc(
+    data,
+    mocks,
+    transfer=None,
+    template=None,
+    use_weight=False,
+    invert_cov=True,
+    model_name="exp_model",
+    scale=1e6,
+    nwalker=32,
+    nsample=15000,
+    max_freq=None,
+    flag_before=True,
+    normalize_template=False,
+    mean_subtract=True,
+    quiet=False,
+):
     """Main routine for performing an MCMC fit to the stacked data.
 
     Parameters
@@ -107,7 +121,7 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
         template = containers.FrequencyStackByPol.from_file(template)
 
     mocks = utils.load_mocks(mocks)
-    nmocks = mocks.index_map['mock'].size
+    nmocks = mocks.index_map["mock"].size
 
     freq = data.freq[:]
     nfreq = freq.size
@@ -118,9 +132,9 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
 
         template = containers.FrequencyStackByPol(attrs_from=data, axes_from=data)
         icenter = np.argmin(np.abs(freq))
-        template['stack'][:] = 0.0
-        template['stack'][:, icenter] = 1.0
-        template['weight'][:] = 1.0
+        template["stack"][:] = 0.0
+        template["stack"][:, icenter] = 1.0
+        template["weight"][:] = 1.0
 
     else:
 
@@ -135,9 +149,9 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
 
         transfer = containers.FrequencyStackByPol(attrs_from=data, axes_from=data)
         icenter = np.argmin(np.abs(freq))
-        transfer['stack'][:] = 0.0
-        transfer['stack'][:, icenter] = 1.0
-        transfer['weight'][:] = 1.0
+        transfer["stack"][:] = 0.0
+        transfer["stack"][:, icenter] = 1.0
+        transfer["weight"][:] = 1.0
 
     # Determine the frequencies to fit
     if max_freq is not None:
@@ -157,7 +171,7 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
     # Initialize all arrays
     data_stack, weight_stack = utils.initialize_pol(data)
     data_stack = scale * data_stack[..., isort]
-    weight_stack = weight_stack[..., isort] / scale**2
+    weight_stack = weight_stack[..., isort] / scale ** 2
 
     mock_stack = scale * mocks.stack[..., isort]
 
@@ -182,19 +196,26 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
     pol = mocks.pol[:]
     npol = pol.size
 
-    results = containers.MCMCFit1D(freq=x, pol=pol, mock=nmocks, walker=nwalker, step=nsample,
-                                   param=np.array(model.param_name), percentile=np.array(PERCENTILE))
+    results = containers.MCMCFit1D(
+        freq=x,
+        pol=pol,
+        mock=nmocks,
+        walker=nwalker,
+        step=nsample,
+        param=np.array(model.param_name),
+        percentile=np.array(PERCENTILE),
+    )
 
-    results['mock'][:] = mock_stack
-    results['stack'][:] = data_stack
-    results['weight'][:] = weight_stack
-    results['transfer_function'][:] = transfer_stack
-    results['flag'][:] = fit_flag
+    results["mock"][:] = mock_stack
+    results["stack"][:] = data_stack
+    results["weight"][:] = weight_stack
+    results["transfer_function"][:] = transfer_stack
+    results["flag"][:] = fit_flag
     if template is not None:
         results.add_dataset("template")
-        results['template'][:] = template_stack
+        results["template"][:] = template_stack
 
-    chisq = results['chisq'][:].view(np.ndarray)
+    chisq = results["chisq"][:].view(np.ndarray)
 
     for pp, pstr in enumerate(pol):
 
@@ -224,11 +245,11 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
         Cinv[fit_slice, fit_slice] = Cinvfit
 
         # Save the covariance matrix to the ouput container
-        results['cov'][pp] = Cfull
-        results['inv_cov'][pp] = Cinv
+        results["cov"][pp] = Cfull
+        results["inv_cov"][pp] = Cinv
 
-        results['error'][pp] = np.sqrt(np.diag(Cfull))
-        results['errori'][pp] = tools.invert_no_zero(np.sqrt(np.diag(Cinv)))
+        results["error"][pp] = np.sqrt(np.diag(Cfull))
+        results["errori"][pp] = tools.invert_no_zero(np.sqrt(np.diag(Cinv)))
 
         # Set the data for this polarisation
         h = transfer_stack[pp]
@@ -236,7 +257,7 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
 
         kwargs = {"data": y, "inv_cov": Cinv, "freq": x, "transfer": h}
 
-        if model_name in ['scaled_shifted_template', 'delta_model']:
+        if model_name in ["scaled_shifted_template", "delta_model"]:
 
             t = template_stack[pp]
             if normalize_template:
@@ -247,8 +268,13 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
         model.set_data(**kwargs)
 
         # Determine starting point for chains in parameter space
-        pos = (0.05 * np.random.randn(nwalker, nparam) *
-               np.array([model.boundary[pn][1] - model.boundary[pn][0] for pn in param_name]).reshape(1, nparam))
+        pos = (
+            0.05
+            * np.random.randn(nwalker, nparam)
+            * np.array(
+                [model.boundary[pn][1] - model.boundary[pn][0] for pn in param_name]
+            ).reshape(1, nparam)
+        )
         pos += np.array([GUESS[pn] for pn in param_name]).reshape(1, nparam)
 
         nwalkers, ndim = pos.shape
@@ -271,10 +297,10 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
         theta_min = chain[imin]
 
         # Save the results to the output container
-        results['chain'][pp] = chain
-        results['autocorr_time'][pp] = sampler.get_autocorr_time(quiet=quiet)
-        results['acceptance_fraction'][pp] = sampler.acceptance_fraction
-        results['model_min_chisq'][pp] = model.model(theta_min)
+        results["chain"][pp] = chain
+        results["autocorr_time"][pp] = sampler.get_autocorr_time(quiet=quiet)
+        results["acceptance_fraction"][pp] = sampler.acceptance_fraction
+        results["model_min_chisq"][pp] = model.model(theta_min)
 
         # Discard burn in and thin the chains
         flat_samples = results.samples(pp, flat=True)
@@ -287,13 +313,11 @@ def process_data_mcmc(data, mocks, transfer=None, template=None, use_weight=Fals
         for ss, theta in enumerate(flat_samples):
             mdl[ss] = model.model(theta)
 
-        results['percentile'][pp] = q
-        results['median'][pp] = q[:, 2]
-        results['span_lower'][pp] = dq[:, 1]
-        results['span_upper'][pp] = dq[:, 2]
+        results["percentile"][pp] = q
+        results["median"][pp] = q[:, 2]
+        results["span_lower"][pp] = dq[:, 1]
+        results["span_upper"][pp] = dq[:, 2]
 
-        results['model_percentile'][pp] = np.percentile(mdl, PERCENTILE, axis=0).T
-
+        results["model_percentile"][pp] = np.percentile(mdl, PERCENTILE, axis=0).T
 
     return results
-
