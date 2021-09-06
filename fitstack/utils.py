@@ -1,6 +1,7 @@
 """Utililites to prepare the data for the fit."""
 
 import numpy as np
+from scipy.fftpack import next_fast_len
 
 from draco.util import tools
 
@@ -37,6 +38,61 @@ def covariance(a, corr=False):
         )
 
     return cov
+
+
+def _centered(arr, newsize):
+    # Return the center newsize portion of the array.
+    newsize = np.asarray(newsize)
+    currsize = np.array(arr.shape)
+    startind = (currsize - newsize) // 2
+    endind = startind + newsize
+    myslice = [slice(startind[k], endind[k]) for k in range(len(endind))]
+    return arr[tuple(myslice)]
+
+
+def shift_and_convolve(freq, template, offset=0.0, kernel=None):
+    """Shift a template and (optionally) convolve with a kernel.
+
+    Parameters
+    ----------
+    freq : np.ndarray[nfreq,]
+        Frequency offset in MHz.
+    template : np.ndarray[..., nfreq]
+        Template for the signal.
+    offset : float
+        Central frequency offset in MHz.
+    kernel : np.ndarray[..., nfreq]
+        Kernel to convolve with the template.
+
+    Returns
+    -------
+    template_sc : np.ndarray[..., nfreq]
+        Template after shifting by offset and convolving with kernel.
+    """
+
+    # Determine the size of the fft needed for convolution
+    size = freq.size if kernel is None else freq.size + kernel.size - 1
+    fsize = next_fast_len(int(size))
+    fslice = slice(0, int(size))
+
+    # Determine the delay corresponding to the frequency offset
+    df = np.abs(freq[1] - freq[0]) * 1e6
+    tau = np.fft.rfftfreq(fsize, d=df) * 1e6
+
+    shift = np.exp(-2.0j * np.pi * tau * offset)
+
+    # Take the fft and apply the delay
+    fft_model = np.fft.rfft(model, fsize, axis=-1) * shift
+
+    # Multiply by the fft of the kernel (if provided)
+    if kernel is not None:
+        fft_model *= np.fft.rfft(kernel, fsize, axis=-1)
+
+    # Perform the inverse fft and center appropriately
+    model = np.fft.irfft(fft_model, fsize)[fslice].real
+    model = _centered(model, freq.size)
+
+    return model
 
 
 def combine_pol(stack):

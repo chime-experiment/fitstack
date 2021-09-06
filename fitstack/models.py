@@ -1,17 +1,9 @@
 """Define models that can be fit to the source stack."""
 
 import numpy as np
-from scipy.fftpack import next_fast_len
 
-
-def _centered(arr, newsize):
-    # Return the center newsize portion of the array.
-    newsize = np.asarray(newsize)
-    currsize = np.array(arr.shape)
-    startind = (currsize - newsize) // 2
-    endind = startind + newsize
-    myslice = [slice(startind[k], endind[k]) for k in range(len(endind))]
-    return arr[tuple(myslice)]
+from . import priors
+from . import utils
 
 
 class Model(object):
@@ -21,12 +13,87 @@ class Model(object):
     ----------
     param_name : list of str
         Names of the model parameters.
-    boundary : dict, {param_name: [lower_bound, upper_bound], ...}
-        Default boundaries on the parameter values.
+    param_spec : dict
+        Dictionary that specifies the prior distribution for each parameter.
+        The keys are the parameter names and the values are themselves
+        dictionaries, i.e,
+            {name: {
+                "fixed": bool,
+                "value": float,
+                "prior": str,
+                "kwargs": dict
+            }, ...
+        where "fixed" is if the parameter should be held fixed at the "value" entry,
+        "prior" is the class name in the fitstack.priors module, and
+        "kwargs" is a dictionary containing any keyword arguments accepted by
+        the __init__ method of that class.
+    param_name_fit : list of str
+        Names of the model parameters that are allowed to vary.
+    param_name_fixed : list of str
+        Names of the model parameters that are fixed at their default value.
+    priors : dict
+        Dictionary where the keys are the parameter names and the values
+        are classes that are used to evaluate the prior distributions.
+        Note that only *fit parameters* have an entry in this dictionary.
+    default_values : np.ndarray[nparam,]
+        The default values for all parameters.
+    fit_index : np.ndarray
+        Index into the param axis that yields the parameters that are
+        allowed to vary.
     """
 
     param_name = []
-    boundary = {}
+    _param_spec = {}
+
+    def __init__(self, seed=None, **param_spec):
+        """Initialize the model.
+
+        Parameters
+        ----------
+        seed : int
+            Seed to use for random number generation.
+            If the seed is not provided, then a random
+            seed will be taken from system entropy.
+        param_spec : dict
+            Specifies the prior distribution for each parameter.
+            See the description of the class attribute of the
+            same name for the required format.  If a parameter
+            is not provided than the default values defined
+            in the _param_spec class attribute will be used.
+        """
+
+        if seed is None:
+            seed = np.random.SeedSequence().entropy
+
+        self.seed = seed
+        self.rng = np.random.Generator(np.random.SFC64(seed))
+
+        self.param_spec = {}
+        for name, default_spec in self._param_spec.items():
+            self.param_spec[name] = param_spec.get(name, default_spec)
+
+        self.priors = {}
+        for name, spec in self.param_spec.items():
+            if not spec["fixed"]:
+                PriorDistribution = getattr(priors, spec["prior"])
+                self.priors[name] = PriorDistribution(rng=self.rng, **spec["kwargs"])
+
+        # Set several useful attributes
+        self.default_values = np.array(
+            [self.param_spec[name]["value"] for name in self.param_name]
+        )
+
+        self.fit_index = np.flatnonzero(
+            [not self.param_spec[name]["fixed"] for name in self.param_name]
+        )
+
+        self.param_name_fit = [
+            name for name in self.param_name if not self.param_spec[name]["fixed"]
+        ]
+
+        self.param_name_fixed = [
+            name for name in self.param_name if self.param_spec[name]["fixed"]
+        ]
 
     def set_data(self, **kwargs):
         """Save any ancillary data needed to evaluate the probabily distribution.
@@ -43,13 +110,25 @@ class Model(object):
         for key, val in kwargs.items():
             setattr(self, key, val)
 
+    def draw_random_parameters(self):
+        """Draw random parameter values from the prior distribution.
+
+        Returns
+        -------
+        theta : list
+            Random parameter values.
+        """
+
+        theta = [self.priors[name].draw_random() for name in self.param_name_fit]
+        return theta
+
     def log_prior(self, theta):
         """Evaluate the log of the prior distribution.
 
         Parameters
         ----------
         theta : list
-            Parameter values.
+            Values for the fit parameters.
 
         Returns
         -------
@@ -59,14 +138,15 @@ class Model(object):
             class attribute and -Inf if they are outside the ranges.
         """
 
-        theta = np.array(theta)
+        priors = [
+            self.prior[name].evaluate(th)
+            for name, th in zip(self.param_name_fit, theta)
+        ]
 
-        bounds = np.array([self.boundary[key] for key in self.param_name])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            log_prior = np.sum(np.log(priors))
 
-        if np.all((theta > bounds[:, 0]) & (theta < bounds[:, 1])):
-            return 0.0
-        else:
-            return -np.inf
+        return log_prior
 
     def log_likelihood(self, theta):
         """Evaluate the log of the likelihood.
@@ -74,7 +154,7 @@ class Model(object):
         Parameters
         ----------
         theta : list
-            Parameter values.
+            Values for the fit parameters.
 
         Returns
         -------
@@ -82,9 +162,11 @@ class Model(object):
             Logarithm of the likelihood function.
         """
 
-        mdl = self.model(theta)
+        theta_all = self.get_all_params(theta)
 
-        residual = self.data - mdl
+        mdl = self.model(theta_all)
+
+        residual = np.ravel(self.data - mdl)
 
         return -0.5 * np.matmul(residual.T, np.matmul(self.inv_cov, residual))
 
@@ -94,7 +176,7 @@ class Model(object):
         Parameters
         ----------
         theta : list
-            Parameter values.
+            Values for the fit parameters.
 
         Returns
         -------
@@ -110,15 +192,68 @@ class Model(object):
         else:
             return lp + self.log_likelihood(theta)
 
+    def get_all_param(self, theta):
+        """Return both fixed and variable parameters in the correct order.
 
-class SST(Model):
+        Parameters
+        ----------
+        theta : list
+            Values for the subset of parameters that are being fit.
+
+        Returns
+        -------
+        theta_all : array
+            Values for the full set of parameters in the order specified
+            by the param_name attribute.  Parameters that are fixed are
+            set to their default values.
+        """
+
+        theta_all = np.copy(self.default_values)
+        theta_all[self.fit_index] = theta
+
+        return theta_all
+
+    @property
+    def nparam(self):
+        """The total number of parameters."""
+        return len(self.param_name)
+
+    @property
+    def nfixed(self):
+        """The number of parameters that are fixed at their default value."""
+        return len(self.param_name_fixed)
+
+    @property
+    def nfit(self):
+        """The number of parameters that are being fit."""
+        return len(self.param_name_fit)
+
+
+class ScaledShiftedTemplate(Model):
     """Scaled and shifted template model."""
-
-    _name = "scaled_shifted_template"
 
     param_name = ["amp", "offset"]
 
-    boundary = {"amp": [0.0, 4.0], "offset": [-1.0, 1.0]}
+    _param_spec = {
+        "amp": {
+            "fixed": False,
+            "value": 1.0,
+            "type": "uniform",
+            "parameters": {
+                "low": 0.0,
+                "high": 10.0,
+            },
+        },
+        "offset": {
+            "fixed": False,
+            "value": 0.0,
+            "type": "uniform",
+            "parameters": {
+                "low": -1.0,
+                "high": 1.0,
+            },
+        },
+    }
 
     def model(self, theta, freq=None, transfer=None, template=None):
         """Evaluate the model consisting of a scaled and shifted template.
@@ -168,36 +303,74 @@ class SST(Model):
 
         amp, offset = theta
 
-        size = freq.size + transfer.size - 1
+        model = utils.shift_and_convolve(
+            freq, amp * template, offset=offset, kernel=transfer
+        )
 
-        fsize = next_fast_len(int(size))  # , True)
-        fslice = slice(0, int(size))
+        return model
 
-        # Evaluate the model
-        model = amp * template
 
-        # Determine the shift
-        df = np.abs(freq[1] - freq[0]) * 1e6
-        tau = np.fft.rfftfreq(fsize, d=df) * 1e6
+class DeltaFunction(ScaledShiftedTemplate):
+    """Delta function model.
 
-        shift = np.exp(-2.0j * np.pi * tau * offset)
+    Subclass of the scaled and shifted template model that uses a delta function
+    as the underlying template.  Useful to compare to the scaled and shifted
+    template model to determine if we are sensitive to signal beyond 0 MHz lag.
+    """
 
-        # Apply the transfer function and shift to the model
-        tmodel = np.fft.irfft(
-            np.fft.rfft(model, fsize) * np.fft.rfft(transfer, fsize) * shift, fsize
-        )[fslice].real
+    def set_data(self, **kwargs):
+        """Save any ancillary data needed to evaluate the probabily distribution.
 
-        return _centered(tmodel, freq.size)
+        Parameters
+        ----------
+        kwargs : {attr: value, ...}
+            Each keyword argument will be saved as an attribute
+            that can be accessed by the methods that evaluate the
+            log of the probability of observing the data given the
+            model parameters.
+        """
+
+        super().set_data(**kwargs)
+
+        icenter = np.argmin(np.abs(self.freq))
+        self.template = np.zeros_like(self.data)
+        self.template[..., icenter] = 1.0
 
 
 class Exponential(Model):
     """Exponential model."""
 
-    _name = "exponential"
+    param_name = ["amp", "offset", "scale"]
 
-    param_name = ["amp", "scale", "offset"]
-
-    boundary = {"amp": [0.0, 500.0], "scale": [0.1, 10.0], "offset": [-1.0, 1.0]}
+    _param_spec = {
+        "amp": {
+            "fixed": False,
+            "value": 100.0,
+            "type": "uniform",
+            "parameters": {
+                "low": 0.0,
+                "high": 500.0,
+            },
+        },
+        "offset": {
+            "fixed": False,
+            "value": 0.0,
+            "type": "uniform",
+            "parameters": {
+                "low": -1.0,
+                "high": 1.0,
+            },
+        },
+        "scale": {
+            "fixed": False,
+            "value": 0.7,
+            "type": "uniform",
+            "parameters": {
+                "low": 0.1,
+                "high": 10.0,
+            },
+        },
+    }
 
     def model(self, theta, freq=None, transfer=None):
         """Evaluate the exponential model.
@@ -206,16 +379,15 @@ class Exponential(Model):
 
             S(\Delta \nu) = A H(\Delta \nu) \circledast exp(-|\Delta \nu - \nu{0}| / s)
 
-        where `S` is the stacked signal as a function of
-        frequency offset :math:`\Delta \nu`, `A` is the amplitude,
-        `s` is the scale, :math:`\nu_{0}` is the central frequency offset,
-        and `H` is the transfer function.
+        where `S` is the stacked signal as a function of frequency offset
+        :math:`\Delta \nu`, `A` is the amplitude, `s` is the scale,
+        :math:`\nu_{0}` is the central frequency, and `H` is the transfer function.
 
         Parameters
         ----------
-        theta : [amp, scale, offset]
+        theta : [amp, offset, scale]
             Three element list containing the model parameters, which are
-            the amplitude, scale (in MHz), and offset (in MHz).
+            the amplitude, central frequency (in MHz), and scale (in MHz).
         freq : np.ndarray[nfreq]
             Frequency offset in MHz.  If this was not provided, then will
             default to the `freq` attribute.
@@ -235,25 +407,11 @@ class Exponential(Model):
         if transfer is None:
             transfer = self.transfer
 
-        amp, scale, offset = theta
-
-        size = freq.size + transfer.size - 1
-
-        fsize = next_fast_len(int(size))  # , True)
-        fslice = slice(0, int(size))
+        amp, offset, scale = theta
 
         # Evaluate the model
-        model = amp * np.exp(-np.abs(freq) / scale)
+        model = utils.shift_and_convolve(
+            freq, amp * np.exp(-np.abs(freq) / scale), offset=offset, kernel=transfer
+        )
 
-        # Determine the shift
-        df = np.abs(freq[1] - freq[0]) * 1e6
-        tau = np.fft.rfftfreq(fsize, d=df) * 1e6
-
-        shift = np.exp(-2.0j * np.pi * tau * offset)
-
-        # Apply the transfer function and shift to the model
-        tmodel = np.fft.irfft(
-            np.fft.rfft(model, fsize) * np.fft.rfft(transfer, fsize) * shift, fsize
-        )[fslice].real
-
-        return _centered(tmodel, freq.size)
+        return model
