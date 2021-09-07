@@ -139,7 +139,7 @@ class Model(object):
         """
 
         priors = [
-            self.prior[name].evaluate(th)
+            self.priors[name].evaluate(th)
             for name, th in zip(self.param_name_fit, theta)
         ]
 
@@ -192,7 +192,7 @@ class Model(object):
         else:
             return lp + self.log_likelihood(theta)
 
-    def get_all_param(self, theta):
+    def get_all_params(self, theta):
         """Return both fixed and variable parameters in the correct order.
 
         Parameters
@@ -238,8 +238,8 @@ class ScaledShiftedTemplate(Model):
         "amp": {
             "fixed": False,
             "value": 1.0,
-            "type": "uniform",
-            "parameters": {
+            "prior": "Uniform",
+            "kwargs": {
                 "low": 0.0,
                 "high": 10.0,
             },
@@ -247,8 +247,8 @@ class ScaledShiftedTemplate(Model):
         "offset": {
             "fixed": False,
             "value": 0.0,
-            "type": "uniform",
-            "parameters": {
+            "prior": "Uniform",
+            "kwargs": {
                 "low": -1.0,
                 "high": 1.0,
             },
@@ -346,8 +346,8 @@ class Exponential(Model):
         "amp": {
             "fixed": False,
             "value": 100.0,
-            "type": "uniform",
-            "parameters": {
+            "prior": "Uniform",
+            "kwargs": {
                 "low": 0.0,
                 "high": 500.0,
             },
@@ -355,8 +355,8 @@ class Exponential(Model):
         "offset": {
             "fixed": False,
             "value": 0.0,
-            "type": "uniform",
-            "parameters": {
+            "prior": "Uniform",
+            "kwargs": {
                 "low": -1.0,
                 "high": 1.0,
             },
@@ -364,8 +364,8 @@ class Exponential(Model):
         "scale": {
             "fixed": False,
             "value": 0.7,
-            "type": "uniform",
-            "parameters": {
+            "prior": "Uniform",
+            "kwargs": {
                 "low": 0.1,
                 "high": 10.0,
             },
@@ -410,8 +410,10 @@ class Exponential(Model):
         amp, offset, scale = theta
 
         # Evaluate the model
+        model_init = amp * np.exp(-np.abs(freq) / scale)
+
         model = utils.shift_and_convolve(
-            freq, amp * np.exp(-np.abs(freq) / scale), offset=offset, kernel=transfer
+            freq, model_init, offset=offset, kernel=transfer
         )
 
         return model

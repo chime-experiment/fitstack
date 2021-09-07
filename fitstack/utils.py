@@ -40,6 +40,74 @@ def covariance(a, corr=False):
     return cov
 
 
+def unravel_covariance(cov, npol, nfreq):
+    """Separate the covariance matrix into sub-arrays based on polarisation.
+
+    Parameters
+    ----------
+    cov : np.ndarray[npol * nfreq, npol * nfreq]
+        Covariance matrix.
+    npol : int
+        Number of polarisations.
+    nfreq : int
+        Number of frequencies.
+
+    Returns
+    -------
+    cov_by_pol : np.ndarray[npol, npol, nfreq, nfreq]
+        Covariance matrix reformatted such that cov_by_pol[i,j]
+        gives the covariance between polarisation i and j as
+        a function of frequency offset.
+    """
+
+    cov_by_pol = np.zeros((npol, npol, nfreq, nfreq), dtype=cov.dtype)
+
+    for aa in range(npol):
+
+        slc_aa = slice(aa * nfreq, (aa + 1) * nfreq)
+
+        for bb in range(npol):
+
+            slc_bb = slice(bb * nfreq, (bb + 1) * nfreq)
+
+            cov_by_pol[aa, bb] = cov[slc_aa, slc_bb]
+
+    return cov_by_pol
+
+
+def ravel_covariance(cov_by_pol):
+    """Collapse the covariance matrix over the polarisation axes.
+
+    Parameters
+    ----------
+    cov_by_pol : np.ndarray[npol, npol, nfreq, nfreq]
+        Covariance matrix as formatted by the unravel_covariance method.
+
+    Returns
+    -------
+    cov : np.ndarray[npol * nfreq, npol * nfreq]
+        The covariance matrix flattened into the format required for
+        inversion and subsequent likelihood computation.
+    """
+
+    npol, _, nfreq, _ = cov_by_pol.shape
+    ntot = npol * nfreq
+
+    cov = np.zeros((ntot, ntot), dtype=cov_by_pol.dtype)
+
+    for aa in range(npol):
+
+        slc_aa = slice(aa * nfreq, (aa + 1) * nfreq)
+
+        for bb in range(npol):
+
+            slc_bb = slice(bb * nfreq, (bb + 1) * nfreq)
+
+            cov[slc_aa, slc_bb] = cov_by_pol[aa, bb]
+
+    return cov
+
+
 def _centered(arr, newsize):
     # Return the center newsize portion of the array.
     newsize = np.asarray(newsize)
@@ -71,7 +139,10 @@ def shift_and_convolve(freq, template, offset=0.0, kernel=None):
     """
 
     # Determine the size of the fft needed for convolution
-    size = freq.size if kernel is None else freq.size + kernel.size - 1
+    nfreq = freq.size
+    assert nfreq == template.shape[-1]
+
+    size = nfreq if kernel is None else nfreq + kernel.shape[-1] - 1
     fsize = next_fast_len(int(size))
     fslice = slice(0, int(size))
 
@@ -82,15 +153,15 @@ def shift_and_convolve(freq, template, offset=0.0, kernel=None):
     shift = np.exp(-2.0j * np.pi * tau * offset)
 
     # Take the fft and apply the delay
-    fft_model = np.fft.rfft(model, fsize, axis=-1) * shift
+    fft_model = np.fft.rfft(template, fsize, axis=-1) * shift
 
     # Multiply by the fft of the kernel (if provided)
     if kernel is not None:
         fft_model *= np.fft.rfft(kernel, fsize, axis=-1)
 
     # Perform the inverse fft and center appropriately
-    model = np.fft.irfft(fft_model, fsize)[fslice].real
-    model = _centered(model, freq.size)
+    model = np.fft.irfft(fft_model, fsize, axis=-1)[..., fslice].real
+    model = _centered(model, template.shape)
 
     return model
 
@@ -134,119 +205,173 @@ def combine_pol(stack):
     return z, wz
 
 
-def initialize_pol(cnt):
-    """Addn element to pol axis that is the weighted sum of XX and YY (labeled I).
+def initialize_pol(cnt, pol=None, combine=False):
+    """Select the stack data for the desired polarisations.
 
     Parameters
     ----------
     cnt : FrequencyStackByPol
         The source stack.
+    pol : list of str
+        The polarisations to select.  If not provided,
+        then ["XX", "YY"] is assumed.
+    combine : bool
+        Add an element to the polarisation axis that is
+        the weighted sum of XX and YY.
 
     Returns
     -------
-    stack : np.ndarray[npol+1, nfreq]
-        The stack dataset with an additional element that is the weighted sum
-        of the stack for the  "XX" and "YY" polarisations.
-    weight : np.ndarray[npol+1, nfreq]
-        The weight dataset with an additional element that is the sum of the weights
-        for the "XX" and "YY" polarisations.
+    stack : np.ndarray[..., npol, nfreq]
+        The stack dataset for the selected polarisations.
+        If combine is True, there will be an additional
+        element that is the weighted sum of the stack for
+        the "XX" and "YY" polarisations.
+    weight : np.ndarray[..., npol, nfreq]
+        The weight dataset for the selected polarisations.
+        If combine is True, there will be an additional
+        element that is the sum of the weights for
+        the "XX" and "YY" polarisations.
     """
 
-    nfreq = cnt.freq.size
-    mpol = cnt.pol.size
+    if pol is None:
+        pol = ["XX", "YY"]
 
-    stack = np.zeros((mpol + 1, nfreq), dtype=cnt.stack.dtype)
-    weight = np.zeros((mpol + 1, nfreq), dtype=cnt.stack.dtype)
+    cpol = list(cnt.pol)
+    ipol = np.array([cpol.index(pstr) for pstr in pol])
 
-    stack[0:mpol] = cnt["stack"][:]
-    weight[0:mpol] = cnt["weight"][:]
+    num_freq = cnt.freq.size
+    num_cpol = ipol.size
 
-    temp, wtemp = combine_pol(cnt)
-    stack[-1] = temp
-    weight[-1] = wtemp
+    num_pol = num_cpol + int(combine)
 
-    return stack, weight
+    ax = list(cnt.stack.attrs["axis"]).index("pol")
+    shp = list(cnt.stack.shape)
+    shp[ax] = num_pol
+
+    stack = np.zeros(shp, dtype=cnt.stack.dtype)
+    weight = np.zeros(shp, dtype=cnt.stack.dtype)
+
+    slc_in = (slice(None),) * ax + (ipol,)
+    slc_out = (slice(None),) * ax + (slice(0, num_cpol),)
+
+    stack[slc_out] = cnt["stack"][slc_in]
+    weight[slc_out] = cnt["weight"][slc_in]
+
+    if combine:
+        slc_out = (slice(None),) * ax + (-1,)
+        temp, wtemp = combine_pol(cnt)
+        stack[slc_out] = temp
+        weight[slc_out] = wtemp
+        cpol.append("I")
+
+    return stack, weight, cpol
 
 
-def load_mocks(mocks, pol_sel=None):
+def load_mocks(mocks, pol=None):
     """Load the mock catalog stacks.
 
     Parameters
     ----------
-    mocks : MockFrequencyStackByPol, str, list of FrequencyStackByPol, list of str
+    mocks : list of FrequencyStackByPol / MockFrequencyStackByPol, str, list of str
         Set of stacks on mock catalogs.  This can either be a
-        MockFrequencyStackByPol container or a list of FrequencyStackByPol
-        containers.  It can also be a filename or list of filenames that
+        MockFrequencyStackByPol container or a list of
+        FrequencyStackByPol or MockFrequencyStackByPol containers.
+        It can also be a filename or list of filenames that
         hold these types of containers and will be loaded from disk.
-
-    pol_sel : slice
-        Load a subset of polarisations.  Only used if the mocks parameter
-        contains filename(s).
+    pol : list of str
+        Desired polarisations.  Defaults to ["XX", "YY"].
 
     Returns
     -------
     out : MockFrequencyStackByPol
-        All mock catalogs in a common container with an
-        intensity polarisation added to the pol axis.
+        All mock catalogs in a common container with an intensity polarisation
+        added to the pol axis if requested.
     """
 
-    if isinstance(mocks, str) or isinstance(mocks, containers.MockFrequencyStackByPol):
+    if pol is None:
+        pol = ["XX", "YY"]
 
-        if isinstance(mocks, str):
-            mocks = containers.MockFrequencyStackByPol.from_file(
-                mocks, pol_sel=pol_sel, detect_subclass=False
+    pol = np.atleast_1d(pol)
+
+    if isinstance(mocks, containers.MockFrequencyStackByPol):
+
+        if not np.array_equal(mocks.pol, pol):
+            raise RuntimeError(
+                "The mock catalogs that were provided have the incorrect polarisations."
             )
 
-        pol = np.append(mocks.pol[:], "I")
-        npol = pol.size
-        mpol = npol - 1
+        out = mocks
 
-        # Create output container
-        out = containers.MockFrequencyStackByPol(pol=pol, axes_from=mocks)
+    elif isinstance(mocks, str):
 
-        # Load the mocks into an array
-        mock_stack = out["stack"][:]
-        mock_weight = out["weight"][:]
-
-        mock_stack[:, 0:mpol, :] = mocks["stack"][:]
-        mock_weight[:, 0:mpol, :] = mocks["weight"][:]
-
-        ms, mw = combine_pol(mocks)
-        mock_stack[:, -1, :] = ms
-        mock_weight[:, -1, :] = mw
+        pol_sel = determine_pol_sel(mfile, pol=pol)
+        out = containers.MockFrequencyStackByPol.from_file(
+            mocks, detect_subclass=False, pol_sel=pol_sel
+        )
 
     else:
 
-        if isinstance(mocks[0], str):
-            mocks = [
-                containers.FrequencyStackByPol.from_file(mck, pol_sel=pol_sel)
-                for mck in mocks
-            ]
+        temp = []
+        for mfile in mocks:
+            if isinstance(mfile, str):
+                pol_sel = determine_pol_sel(mfile, pol=pol)
+                temp.append(
+                    containers.FrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
+                )
+            else:
+                if not np.array_equal(mfile.pol, pol):
+                    raise RuntimeError(
+                        "The mock catalogs that were provided have the incorrect polarisations."
+                    )
+                temp.append(mfile)
 
-        nmocks = len(mocks)
+        nmocks = [
+            mock.index_map["mock"].size if "mock" in mock.index_map else 1
+            for mock in temp
+        ]
 
-        mock0 = mocks[0]
-        freq = mock0.index_map["freq"]
+        boundaries = np.concatenate(([0], np.cumsum(nmocks)))
 
-        pol = np.append(mock0.pol[:], "I")
-        npol = pol.size
-        mpol = npol - 1
+        out = containers.MockFrequencyStackByPol(mock=boundaries[-1], axes_from=temp[0])
 
-        # Create output container
-        out = containers.MockFrequencyStackByPol(
-            freq=freq, pol=pol, mock=np.arange(nmocks, dtype=np.int)
-        )
+        for mm, (mock, nm) in enumerate(zip(temp, nmocks)):
 
-        # Load the mocks into an array
-        mock_stack = out["stack"][:]
-        mock_weight = out["weight"][:]
+            if nm > 1:
+                slc_out = slice(boundaries[mm], boundaries[mm + 1])
+            else:
+                slc_out = boundaries[mm]
 
-        for mm, mck in enumerate(mocks):
-            mock_stack[mm, 0:mpol, :] = mck["stack"][:]
-            mock_weight[mm, 0:mpol, :] = mck["weight"][:]
-
-            ms, mw = combine_pol(mck)
-            mock_stack[mm, -1, :] = ms
-            mock_weight[mm, -1, :] = mw
+            out.stack[slc_out] = mock.stack[:]
+            out.weight[slc_out] = mock.weight[:]
 
     return out
+
+
+def determine_pol_sel(filename, pol=None):
+    """Find indices into the pol axis of a file that yield the desired polarisations.
+
+    Parameters
+    ----------
+    filename : str
+        Name of the file.
+    pol : list of str
+        Desired polarisations.  Defaults to ["XX", "YY"].
+
+    Returns
+    -------
+    ipol : np.ndarray[npol,]
+        Array of indices into the polarisation axis that yields
+        the requested polarisations.
+    """
+
+    if pol is None:
+        pol = ["XX", "YY"]
+
+    pol = np.atleast_1d(pol)
+
+    with h5py.File(filename, "r") as handler:
+        fpol = list(handler["index_map"]["pol"][:].astype(str))
+
+    ipol = np.array([fpol.index(pstr) for pstr in pol])
+
+    return ipol

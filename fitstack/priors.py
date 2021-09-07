@@ -44,7 +44,7 @@ class Uniform(Prior):
             The upper boundary.
         """
 
-        super.__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self.low = low
         self.high = high
@@ -92,7 +92,7 @@ class Gaussian(Prior):
             The standard deviation.
         """
 
-        super.__init__(**kwargs)
+        super().__init__(**kwargs)
 
         self.loc = loc
         self.scale = scale

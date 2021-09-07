@@ -20,7 +20,7 @@ class StackSet1D(FrequencyStackByPol):
         "transfer_function": {
             "axes": ["pol", "freq"],
             "dtype": np.float64,
-            "initialise": True,
+            "initialise": False,
             "distributed": False,
         },
         "template": {
@@ -47,7 +47,7 @@ class StackSet3D(Stack3D):
         "transfer_function": {
             "axes": ["pol", "delta_ra", "delta_dec", "freq"],
             "dtype": np.float64,
-            "initialise": True,
+            "initialise": False,
             "distributed": False,
         },
         "template": {
@@ -62,69 +62,64 @@ class StackSet3D(Stack3D):
 class MCMCFit(ContainerBase):
     """Base container for the results of a model fit."""
 
-    _axes = ("pol", "step", "walker", "param", "percentile")
+    _axes = ("step", "walker", "param", "percentile")
 
     _dataset_spec = {
         "chain": {
-            "axes": ["pol", "step", "walker", "param"],
+            "axes": ["step", "walker", "param"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "chisq": {
-            "axes": ["pol", "step", "walker"],
+            "axes": ["step", "walker"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "autocorr_time": {
-            "axes": ["pol", "param"],
+            "axes": ["param"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "acceptance_fraction": {
-            "axes": ["pol", "walker"],
+            "axes": ["walker"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "percentile": {
-            "axes": ["pol", "param", "percentile"],
+            "axes": ["param", "percentile"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "median": {
-            "axes": ["pol", "param"],
+            "axes": ["param"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "span_lower": {
-            "axes": ["pol", "param"],
+            "axes": ["param"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
         "span_upper": {
-            "axes": ["pol", "param"],
+            "axes": ["param"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
         },
     }
 
-    def samples(self, pol, flat=True):
+    def samples(self, flat=True):
         """Return independent samples from the joint posterior distribution.
 
         Parameters
         ----------
-        pol : str or int
-            Return the samples for this polarisation.
-            If a string is provided, then the pol index map will
-            be searched for that string.  Otherwise the value provided,
-            is assumed to be an index into the pol axis.
         flat : bool
             If True, then the samples will be flattened over the
             step and walker axis.  Default is True.
@@ -137,73 +132,46 @@ class MCMCFit(ContainerBase):
             This will be 2D if flat is True and 3D if flat is False.
         """
 
-        if isinstance(pol, str):
-            pp = list(self.index_map["pol"]).index(pol)
-        else:
-            pp = pol
-
-        slc = self.slice_chain(pp)
-
-        samples = self.datasets["chain"][pp, slc, :, :]
+        samples = self.datasets["chain"][self.slice_chain, :, :]
 
         if flat:
             samples = samples.reshape(-1, samples.shape[-1])
 
         return samples
 
-    def slice_chain(self, pol):
+    @property
+    def slice_chain(self):
         """Create a slice along the step axis that discards burn-in and thins.
 
         Discards 10 times the autocorrelation length and thins by the
         autocorrelation length divided by 2.
-
-        Parameters
-        ----------
-        pol : str or int
-            Use the autocorrelation time for this polarisation.
-            If a string is provided, then the pol index map will
-            be searched for that string.  Otherwise the value provided,
-            is assumed to be an index into the pol axis.
-
-        Returns
-        -------
-        slc : slice
-            Slice to be applied to the step axis.
         """
 
-        if isinstance(pol, str):
-            pp = list(self.index_map["pol"]).index(pol)
-        else:
-            pp = pol
-
-        tau = int(np.max(self.datasets["autocorr_time"][pp]))
+        tau = int(np.max(self.datasets["autocorr_time"][:]))
         thin = tau // 2
         discard = tau * 10
 
         return slice(discard, self.nstep, thin)
 
     @property
-    def minimum_chisq(self):
+    def min_chisq(self):
         """Return the minimum chi-squared."""
-        return np.min(self.datasets["chisq"][:], axis=(-2, -1))
+        return np.min(self.datasets["chisq"][:])
 
     @property
     def nstep(self):
         """Return the total number of steps taken."""
         return self.index_map["step"].size
 
-    @property
-    def ndof(self):
-        """Return the number of degrees of freedom."""
-        return np.sum(self.datasets["flag"][:]) - self.index_map["param"].size
-
 
 class MCMCFit1D(MCMCFit, StackSet1D):
     """Container for the results of a model fit to 1D stack and all associated data."""
 
+    _axes = ("x",)
+
     _dataset_spec = {
-        "flag": {
-            "axes": ["freq"],
+        "cov": {
+            "axes": ["pol", "pol", "freq", "freq"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
@@ -214,20 +182,20 @@ class MCMCFit1D(MCMCFit, StackSet1D):
             "initialise": True,
             "distributed": False,
         },
-        "errori": {
-            "axes": ["pol", "freq"],
-            "dtype": np.float64,
+        "freq_flag": {
+            "axes": ["freq"],
+            "dtype": np.bool,
             "initialise": True,
             "distributed": False,
         },
-        "cov": {
-            "axes": ["pol", "freq", "freq"],
-            "dtype": np.float64,
+        "flag": {
+            "axes": ["x"],
+            "dtype": np.bool,
             "initialise": True,
             "distributed": False,
         },
-        "inv_cov": {
-            "axes": ["pol", "freq", "freq"],
+        "precision": {
+            "axes": ["x", "x"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
@@ -245,6 +213,11 @@ class MCMCFit1D(MCMCFit, StackSet1D):
             "distributed": False,
         },
     }
+
+    @property
+    def ndof(self):
+        """Return the number of degrees of freedom."""
+        return np.sum(self.datasets["flag"][:]) - self.index_map["param"].size
 
 
 class MCMCFit3D(MCMCFit, StackSet3D):
