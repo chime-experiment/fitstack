@@ -417,6 +417,7 @@ class RunMCMC(task.SingleTask):
 
         # Use the default values from the run_mcmc method,
         # so we do not have to repeat them in two places.
+        signature = inspect.signature(run_mcmc)
         defaults =  {k: v.default if v.default is not inspect.Parameter.empty else None
                      for k, v in signature.parameters.items()}
                      
