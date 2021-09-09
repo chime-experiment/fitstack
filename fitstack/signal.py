@@ -87,12 +87,15 @@ class SignalTemplate:
         A scaling factor to apply to the sims. Unfortunately some of the sims were
         generated in mK rather than K, so the default value (`1e-3`) will scale the
         templates into Kelvin.
+    aliases
+        Allow the parameters to be given by more meaningful names.
     """
 
     def __init__(
         self,
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         factor: float = 1e-3,
+        aliases: Optional[Dict[str, str]] = None,
     ):
 
         if derivs is None:
@@ -103,6 +106,7 @@ class SignalTemplate:
             }
         self._derivs = derivs
         self._factor = factor
+        self._aliases = aliases if aliases is not None else {}
 
     @classmethod
     def load_from_stackfiles(cls, pattern: str, **kwargs):
@@ -173,7 +177,8 @@ class SignalTemplate:
         stack_modes = {}
 
         # Get the first frequency axis as a reference
-        self._freq = next(iter(stacks.values())).freq[:]
+        self._freq = next(iter(stacks.values())).freq[:].copy()
+        self._freq.flags.writeable = False
 
         def _check_load_stack(key):
             # Validate the stack and extract the template and its variance
@@ -278,6 +283,7 @@ class SignalTemplate:
         # Add in any derivative contributions
         for name, (_, x0) in self._derivs.items():
 
+            name = self._aliases.get(name, name)
             if name not in kwargs:
                 raise ValueError(f"Need a value for deriv parameter {name}")
 
@@ -288,6 +294,7 @@ class SignalTemplate:
         # Add in any non-component contributins
         for name, stack in self._stack_noncomp.items():
 
+            name = self._aliases.get(name, name)
             if name not in kwargs:
                 raise ValueError(f"Need a value for non-comp parameter {name}")
 
@@ -299,3 +306,17 @@ class SignalTemplate:
         signal *= omega
 
         return signal
+
+    @property
+    def freq(self):
+        """Get the frequency separations the template is defined at."""
+        return self._freq
+
+    @property
+    def params(self):
+        """The names of all the parameters needed to generate the template."""
+        return (
+            ["omega", "b_HI", "b_g"]
+            + [self._aliases.get(name, name) for name in self._stack_comp.keys()]
+            + [self._aliases.get(name, name) for name in self._stack_noncomp.keys()]
+        )
