@@ -1,4 +1,6 @@
 """Utililites to prepare the data for the fit."""
+import os
+import glob
 
 import numpy as np
 from scipy.fftpack import next_fast_len
@@ -272,7 +274,7 @@ def load_mocks(mocks, pol=None):
 
     Parameters
     ----------
-    mocks : list of FrequencyStackByPol / MockFrequencyStackByPol, str, list of str
+    mocks : list of str, FrequencyStackByPol, or MockFrequencyStackByPol; or glob
         Set of stacks on mock catalogs.  This can either be a
         MockFrequencyStackByPol container or a list of
         FrequencyStackByPol or MockFrequencyStackByPol containers.
@@ -284,8 +286,7 @@ def load_mocks(mocks, pol=None):
     Returns
     -------
     out : MockFrequencyStackByPol
-        All mock catalogs in a common container with an intensity polarisation
-        added to the pol axis if requested.
+        All mock catalogs in a single container.
     """
 
     if pol is None:
@@ -302,14 +303,10 @@ def load_mocks(mocks, pol=None):
 
         out = mocks
 
-    elif isinstance(mocks, str):
-
-        pol_sel = determine_pol_sel(mfile, pol=pol)
-        out = containers.MockFrequencyStackByPol.from_file(
-            mocks, detect_subclass=False, pol_sel=pol_sel
-        )
-
     else:
+
+        if isinstance(mocks, str):
+            mocks = sorted(glob.glob(mocks))
 
         temp = []
         for mfile in mocks:
@@ -375,3 +372,33 @@ def determine_pol_sel(filename, pol=None):
     ipol = np.array([fpol.index(pstr) for pstr in pol])
 
     return ipol
+
+
+def find_file(search):
+    """Find the most recent file matching a glob string.
+    
+    Parameters
+    ----------
+    search : str
+        Glob string to search.
+    
+    Returns
+    -------
+    filename : str
+        Most recently modified file that matches the search.
+    """
+
+    files = glob.glob(search)
+    files.sort(reverse=True, key=os.path.getmtime)
+
+    nfiles = len(files)
+    
+    if nfiles == 0:
+        raise ValueError(f"Could not find file {search}")
+
+    elif nfiles > 1:
+        ostr = "\n".join([f"({ii+1}) {ff}" for ii, ff in enumerate(files)])
+        logger.warning(f"Found {nfiles} files that match search criteria.  "
+                       "Using (1):\n" + ostr)
+
+    return files[0]

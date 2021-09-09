@@ -1,2 +1,3 @@
+caput @ git+https://github.com/radiocosmology/caput.git
 draco @ git+https://github.com/radiocosmology/draco.git
 emcee

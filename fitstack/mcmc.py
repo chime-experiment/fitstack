@@ -1,10 +1,15 @@
 """Perform an MCMC fit of a model to a source stack."""
 import logging
+import inspect
 
 import numpy as np
 import emcee
 
+from caput import config
+
 from draco.util import tools
+from draco.core import task
+from draco.core.io import _list_or_glob
 
 from . import containers
 from . import utils
@@ -18,7 +23,7 @@ PERCENTILE = [2.5, 16, 50, 84, 97.5]
 
 
 # main script
-def process_data_mcmc(
+def run_mcmc(
     data,
     mocks,
     transfer=None,
@@ -36,7 +41,7 @@ def process_data_mcmc(
     prior_spec=None,
     seed=None,
 ):
-    """Main routine for performing an MCMC fit to the stacked data.
+    """Fit a model to the source stack using an MCMC.
 
     Parameters
     ----------
@@ -118,17 +123,21 @@ def process_data_mcmc(
     required_pol = ["XX", "YY"]
     combine_pol = True
 
+    # Load the data
     if isinstance(data, str):
-        pol_sel = utils.determine_pol_sel(data, pol=required_pol)
-        data = containers.FrequencyStackByPol.from_file(data, pol_sel=pol_sel)
+        data = utils.find_file(data)
+        pol_sel = utils.determine_pol_sel(data[0], pol=required_pol)
+        data = containers.FrequencyStackByPol.from_file(data[0], pol_sel=pol_sel)
 
+    # Load the transfer function
     if transfer is not None and isinstance(transfer, str):
+        transfer = utils.find_file(transfer)
         pol_sel = utils.determine_pol_sel(transfer, pol=required_pol)
         transfer = containers.FrequencyStackByPol.from_file(transfer, pol_sel=pol_sel)
 
-    if template is not None and isinstance(template, str):
-        pol_sel = utils.determine_pol_sel(template, pol=required_pol)
-        template = containers.FrequencyStackByPol.from_file(template, pol_sel=pol_sel)
+    # Load the templates
+    if template is not None:
+        template = utils.load_mocks(template, pol=required_pol)
 
     # Load the mock catalogs
     mocks = utils.load_mocks(mocks, pol=required_pol)
@@ -157,9 +166,9 @@ def process_data_mcmc(
     freq = freq[isort]
 
     if max_freq is not None:
-        freq_flag = (np.abs(freq) < max_freq).astype(np.float32)
+        freq_flag = np.abs(freq) < max_freq
     else:
-        freq_flag = np.ones(nfreq, dtype=np.float32)
+        freq_flag = np.ones(nfreq, dtype=bool)
 
     freq_index = np.flatnonzero(freq_flag)
     freq_slice = slice(freq_index[0], freq_index[-1] + 1)
@@ -187,7 +196,9 @@ def process_data_mcmc(
         template_stack, _, _ = utils.initialize_pol(
             template, pol=required_pol, combine=combine_pol
         )
-        template_stack = scale * template_stack[..., isort]
+
+        # Use the mean value of the template over realizations
+        template_stack = scale * np.mean(template_stack, axis=0)[..., isort]
 
         if normalize_template:
             max_template = np.max(
@@ -285,7 +296,8 @@ def process_data_mcmc(
     if not flag_before:
         Cinvfit = Cinvfit[ifit][:, ifit]
 
-    Cinv[ifit][:, ifit] = Cinvfit
+    for ii, oi in enumerate(ifit):
+        Cinv[oi, ifit] = Cinvfit[ii, :]
 
     results["precision"][:] = Cinv
     results["flag"][:] = np.diag(Cinv) > 0.0
@@ -366,3 +378,61 @@ def process_data_mcmc(
 
     # Return results container
     return results
+
+
+class RunMCMC(task.SingleTask):
+    """Pipeline task that calls the run_mcmc function.
+    
+    Enables the user to call the run_mcmc method with caput-pipeline,
+    which provides many useful features including profiling, job script
+    generation, job templating, and saving the results to disk.
+    
+    See the arguments of the run_mcmc method for a list of attributes
+    and their default values.
+    """
+
+    data = config.Property(proptype=str)
+    mocks = config.Property(proptype=_list_or_glob)
+    transfer = config.Property(proptype=str)
+    template = config.Property(proptype=_list_or_glob)
+
+    pol_fit = config.Property(proptype=str)
+    model_name = config.Property(proptype=str)
+    scale = config.Property(proptype=float)
+
+    nwalker = config.Property(proptype=int)
+    nsample = config.Property(proptype=int)
+
+    max_freq = config.Property(proptype=float)
+    flag_before = config.Property(proptype=bool)
+    normalize_template = config.Property(proptype=bool)
+    mean_subtract = config.Property(proptype=bool)
+    recompute_weight = config.Property(proptype=bool)
+
+    prior_spec = config.Property(proptype=dict)
+    seed = config.Property(proptype=int)
+    
+    def setup(self):
+        """Prepare all arguments to the run_mcmc function."""
+
+        # Use the default values from the run_mcmc method,
+        # so we do not have to repeat them in two places.
+        defaults =  {k: v.default if v.default is not inspect.Parameter.empty else None
+                     for k, v in signature.parameters.items()}
+                     
+        self.kwargs = {}
+        for key, default_val in defaults.items():
+            if hasattr(self, key):
+                prop_val = getattr(self, key)
+                self.kwargs[key] = prop_val if prop_val is not None else default_val
+            else:
+                self.log.warning("RunMCMC does not have a property corresponding "
+                                 f"to the {key} keyword argument to run_mcmc.")
+
+    def process(self):
+        """Fit a model to the source stack using a MCMC."""
+
+        result = run_mcmc(**self.kwargs)
+
+        return result
+
