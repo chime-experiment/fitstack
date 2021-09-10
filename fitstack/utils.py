@@ -2,6 +2,8 @@
 import os
 import glob
 
+import h5py
+
 import numpy as np
 from scipy.fftpack import next_fast_len
 
@@ -313,7 +315,7 @@ def load_mocks(mocks, pol=None):
             if isinstance(mfile, str):
                 pol_sel = determine_pol_sel(mfile, pol=pol)
                 temp.append(
-                    containers.FrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
+                    containers.MockFrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
                 )
             else:
                 if not np.array_equal(mfile.pol, pol):
@@ -329,7 +331,9 @@ def load_mocks(mocks, pol=None):
 
         boundaries = np.concatenate(([0], np.cumsum(nmocks)))
 
-        out = containers.MockFrequencyStackByPol(mock=boundaries[-1], axes_from=temp[0])
+        out = containers.MockFrequencyStackByPol(
+            mock=int(boundaries[-1]), axes_from=temp[0]
+        )
 
         for mm, (mock, nm) in enumerate(zip(temp, nmocks)):
 
