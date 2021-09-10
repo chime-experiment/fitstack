@@ -2,6 +2,8 @@
 import os
 import glob
 
+import h5py
+
 import numpy as np
 from scipy.fftpack import next_fast_len
 
@@ -313,7 +315,7 @@ def load_mocks(mocks, pol=None):
             if isinstance(mfile, str):
                 pol_sel = determine_pol_sel(mfile, pol=pol)
                 temp.append(
-                    containers.FrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
+                    containers.MockFrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
                 )
             else:
                 if not np.array_equal(mfile.pol, pol):
@@ -329,7 +331,9 @@ def load_mocks(mocks, pol=None):
 
         boundaries = np.concatenate(([0], np.cumsum(nmocks)))
 
-        out = containers.MockFrequencyStackByPol(mock=boundaries[-1], axes_from=temp[0])
+        out = containers.MockFrequencyStackByPol(
+            mock=int(boundaries[-1]), axes_from=temp[0]
+        )
 
         for mm, (mock, nm) in enumerate(zip(temp, nmocks)):
 
@@ -376,12 +380,12 @@ def determine_pol_sel(filename, pol=None):
 
 def find_file(search):
     """Find the most recent file matching a glob string.
-    
+
     Parameters
     ----------
     search : str
         Glob string to search.
-    
+
     Returns
     -------
     filename : str
@@ -392,13 +396,14 @@ def find_file(search):
     files.sort(reverse=True, key=os.path.getmtime)
 
     nfiles = len(files)
-    
+
     if nfiles == 0:
         raise ValueError(f"Could not find file {search}")
 
     elif nfiles > 1:
         ostr = "\n".join([f"({ii+1}) {ff}" for ii, ff in enumerate(files)])
-        logger.warning(f"Found {nfiles} files that match search criteria.  "
-                       "Using (1):\n" + ostr)
+        logger.warning(
+            f"Found {nfiles} files that match search criteria.  " "Using (1):\n" + ostr
+        )
 
     return files[0]

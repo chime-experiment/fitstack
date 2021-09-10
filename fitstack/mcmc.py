@@ -126,8 +126,8 @@ def run_mcmc(
     # Load the data
     if isinstance(data, str):
         data = utils.find_file(data)
-        pol_sel = utils.determine_pol_sel(data[0], pol=required_pol)
-        data = containers.FrequencyStackByPol.from_file(data[0], pol_sel=pol_sel)
+        pol_sel = utils.determine_pol_sel(data, pol=required_pol)
+        data = containers.FrequencyStackByPol.from_file(data, pol_sel=pol_sel)
 
     # Load the transfer function
     if transfer is not None and isinstance(transfer, str):
@@ -353,7 +353,7 @@ def run_mcmc(
     results["chain"][:] = chain_all
     results["autocorr_time"][:] = sampler.get_autocorr_time(quiet=True)
     results["acceptance_fraction"][:] = sampler.acceptance_fraction
-    results["model_min_chisq"][:] = model.model(theta_min, **eval_kwargs)
+    results["model_min_chisq"][ipol] = model.model(theta_min, **eval_kwargs)
 
     # Discard burn in and thin the chains
     flat_samples = results.samples(flat=True)
@@ -370,7 +370,7 @@ def run_mcmc(
     # Compute percentiles of the model
     mdl = np.zeros((flat_samples.shape[0], npol, nfreq), dtype=np.float32)
     for ss, theta in enumerate(flat_samples):
-        mdl[ss] = model.model(theta, **eval_kwargs)
+        mdl[ss, ipol] = model.model(theta, **eval_kwargs)
 
     results["model_percentile"][:] = np.percentile(mdl, PERCENTILE, axis=0).transpose(
         1, 2, 0
@@ -382,11 +382,11 @@ def run_mcmc(
 
 class RunMCMC(task.SingleTask):
     """Pipeline task that calls the run_mcmc function.
-    
+
     Enables the user to call the run_mcmc method with caput-pipeline,
     which provides many useful features including profiling, job script
     generation, job templating, and saving the results to disk.
-    
+
     See the arguments of the run_mcmc method for a list of attributes
     and their default values.
     """
@@ -411,24 +411,28 @@ class RunMCMC(task.SingleTask):
 
     prior_spec = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
-    
+
     def setup(self):
         """Prepare all arguments to the run_mcmc function."""
 
         # Use the default values from the run_mcmc method,
         # so we do not have to repeat them in two places.
         signature = inspect.signature(run_mcmc)
-        defaults =  {k: v.default if v.default is not inspect.Parameter.empty else None
-                     for k, v in signature.parameters.items()}
-                     
+        defaults = {
+            k: v.default if v.default is not inspect.Parameter.empty else None
+            for k, v in signature.parameters.items()
+        }
+
         self.kwargs = {}
         for key, default_val in defaults.items():
             if hasattr(self, key):
                 prop_val = getattr(self, key)
                 self.kwargs[key] = prop_val if prop_val is not None else default_val
             else:
-                self.log.warning("RunMCMC does not have a property corresponding "
-                                 f"to the {key} keyword argument to run_mcmc.")
+                self.log.warning(
+                    "RunMCMC does not have a property corresponding "
+                    f"to the {key} keyword argument to run_mcmc."
+                )
 
     def process(self):
         """Fit a model to the source stack using a MCMC."""
@@ -436,4 +440,3 @@ class RunMCMC(task.SingleTask):
         result = run_mcmc(**self.kwargs)
 
         return result
-
