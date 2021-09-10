@@ -3,6 +3,7 @@
 import numpy as np
 
 from . import priors
+from . import signal
 from . import utils
 
 
@@ -417,3 +418,129 @@ class Exponential(Model):
         )
 
         return model
+
+
+class SimulationTemplateBase(Model):
+    """Fit the stack data to simulation templates."""
+
+    _param_spec = {
+        "offset": {
+            "fixed": False,
+            "value": 0.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -1.0,
+                "high": 1.0,
+            },
+        },
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -10.0,
+                "high": 10.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -10.0,
+                "high": 10.0,
+            },
+        },
+        # This is the only parameter which is reasonably constrained
+        "b_g": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 2.0,
+            },
+        },
+        "NL": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -1.0,
+                "high": 2.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 3.0,
+            },
+        },
+        "FoGg": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 3.0,
+            },
+        },
+        "M_10": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+    }
+
+    # Default base path
+    base_path = (
+        "/project/rpp-chime/chime/stacking/sims/analysis_stacks_comp/psbeam/psbeam/"
+    )
+
+    def __init__(self, *args, **kwargs):
+
+        pattern = (
+            self.base_path
+            + f"dataweight_compderiv*/post/datamask/{self.tracer}/{self.field}/"
+        )
+        factor = 1e3
+
+        self._signal_template = signal.SignalTemplate.load_from_stackfiles(
+            pattern,
+            factor=factor,
+            aliases=dict(shotnoise="M_10"),
+        )
+
+        self.param_name = list(self._param_spec.keys())
+
+        super().__init__(*args, **kwargs)
+
+    def model(self, theta, freq=None, **kwargs):
+
+        if freq is None:
+            freq = self.freq
+
+        param_dict = {k: v for k, v in zip(self._param_spec.keys(), theta)}
+
+        offset = theta[0]
+
+        # Compute the model and extract the XX and YY polarisations
+        model_init = self._signal_template.signal(**param_dict)[[0, 3]]
+
+        model = utils.shift_and_convolve(freq, model_init, offset=offset, kernel=None)
+
+        return model
+
+
+# TODO: this would probably be cleaner if we could pass parameters through to the model
+# constructors
+class SimulationTemplateQSONGC(SimulationTemplateBase):
+    tracer = "QSO"
+    field = "NGC"
