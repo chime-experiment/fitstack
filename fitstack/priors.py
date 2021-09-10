@@ -112,7 +112,7 @@ class Gaussian(Prior):
             The probability of observing the input parameter value.
         """
 
-        return self.norm * np.exp(-((theta - loc) ** 2) / (2.0 * self.scale ** 2))
+        return self.norm * np.exp(-((theta - self.loc) ** 2) / (2.0 * self.scale ** 2))
 
     def draw_random(self):
         """Draw a random value of the parameter from the prior distribution.
