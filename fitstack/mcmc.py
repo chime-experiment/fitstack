@@ -126,8 +126,8 @@ def run_mcmc(
     # Load the data
     if isinstance(data, str):
         data = utils.find_file(data)
-        pol_sel = utils.determine_pol_sel(data[0], pol=required_pol)
-        data = containers.FrequencyStackByPol.from_file(data[0], pol_sel=pol_sel)
+        pol_sel = utils.determine_pol_sel(data, pol=required_pol)
+        data = containers.FrequencyStackByPol.from_file(data, pol_sel=pol_sel)
 
     # Load the transfer function
     if transfer is not None and isinstance(transfer, str):
