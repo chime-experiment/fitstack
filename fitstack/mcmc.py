@@ -353,7 +353,7 @@ def run_mcmc(
     results["chain"][:] = chain_all
     results["autocorr_time"][:] = sampler.get_autocorr_time(quiet=True)
     results["acceptance_fraction"][:] = sampler.acceptance_fraction
-    results["model_min_chisq"][:] = model.model(theta_min, **eval_kwargs)
+    results["model_min_chisq"][ipol] = model.model(theta_min, **eval_kwargs)
 
     # Discard burn in and thin the chains
     flat_samples = results.samples(flat=True)
@@ -370,7 +370,7 @@ def run_mcmc(
     # Compute percentiles of the model
     mdl = np.zeros((flat_samples.shape[0], npol, nfreq), dtype=np.float32)
     for ss, theta in enumerate(flat_samples):
-        mdl[ss] = model.model(theta, **eval_kwargs)
+        mdl[ss, ipol] = model.model(theta, **eval_kwargs)
 
     results["model_percentile"][:] = np.percentile(mdl, PERCENTILE, axis=0).transpose(
         1, 2, 0
