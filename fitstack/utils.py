@@ -376,12 +376,12 @@ def determine_pol_sel(filename, pol=None):
 
 def find_file(search):
     """Find the most recent file matching a glob string.
-    
+
     Parameters
     ----------
     search : str
         Glob string to search.
-    
+
     Returns
     -------
     filename : str
@@ -392,13 +392,14 @@ def find_file(search):
     files.sort(reverse=True, key=os.path.getmtime)
 
     nfiles = len(files)
-    
+
     if nfiles == 0:
         raise ValueError(f"Could not find file {search}")
 
     elif nfiles > 1:
         ostr = "\n".join([f"({ii+1}) {ff}" for ii, ff in enumerate(files)])
-        logger.warning(f"Found {nfiles} files that match search criteria.  "
-                       "Using (1):\n" + ostr)
+        logger.warning(
+            f"Found {nfiles} files that match search criteria.  " "Using (1):\n" + ostr
+        )
 
     return files[0]

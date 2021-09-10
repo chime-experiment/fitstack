@@ -382,11 +382,11 @@ def run_mcmc(
 
 class RunMCMC(task.SingleTask):
     """Pipeline task that calls the run_mcmc function.
-    
+
     Enables the user to call the run_mcmc method with caput-pipeline,
     which provides many useful features including profiling, job script
     generation, job templating, and saving the results to disk.
-    
+
     See the arguments of the run_mcmc method for a list of attributes
     and their default values.
     """
@@ -411,24 +411,28 @@ class RunMCMC(task.SingleTask):
 
     prior_spec = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
-    
+
     def setup(self):
         """Prepare all arguments to the run_mcmc function."""
 
         # Use the default values from the run_mcmc method,
         # so we do not have to repeat them in two places.
         signature = inspect.signature(run_mcmc)
-        defaults =  {k: v.default if v.default is not inspect.Parameter.empty else None
-                     for k, v in signature.parameters.items()}
-                     
+        defaults = {
+            k: v.default if v.default is not inspect.Parameter.empty else None
+            for k, v in signature.parameters.items()
+        }
+
         self.kwargs = {}
         for key, default_val in defaults.items():
             if hasattr(self, key):
                 prop_val = getattr(self, key)
                 self.kwargs[key] = prop_val if prop_val is not None else default_val
             else:
-                self.log.warning("RunMCMC does not have a property corresponding "
-                                 f"to the {key} keyword argument to run_mcmc.")
+                self.log.warning(
+                    "RunMCMC does not have a property corresponding "
+                    f"to the {key} keyword argument to run_mcmc."
+                )
 
     def process(self):
         """Fit a model to the source stack using a MCMC."""
@@ -436,4 +440,3 @@ class RunMCMC(task.SingleTask):
         result = run_mcmc(**self.kwargs)
 
         return result
-
