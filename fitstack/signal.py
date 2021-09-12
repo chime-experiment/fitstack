@@ -6,72 +6,14 @@ from typing import Dict, Optional, Tuple, List
 from pathlib import Path
 
 import numpy as np
+import numpy.typing as npt
 
-from draco.core.containers import (
-    ContainerBase,
-    FrequencyStackByPol,
-    MockFrequencyStackByPol,
-)
+from draco.util import tools
+from draco.core.containers import FrequencyStackByPol
+
+from . import utils
 
 logger = logging.getLogger(__name__)
-
-
-def stack_av(stacks: List[FrequencyStackByPol]) -> FrequencyStackByPol:
-    """Average a bunch of individual stacks together.
-
-    This also calculates an estimate of the noise as it does so.
-    """
-
-    av = FrequencyStackByPol(stacks[0])
-
-    av.stack[:] = 0.0
-
-    sarr = [s.stack[:] for s in stacks]
-
-    av.stack[:] = np.mean(sarr, axis=0)
-    av.var = np.var(sarr, axis=0)
-    av.num = len(stacks)
-
-    return av
-
-
-def stack_av_group(stack_groups: List[MockFrequencyStackByPol]) -> FrequencyStackByPol:
-    """Average a bunch of stack groups together into a single stack."""
-
-    av = FrequencyStackByPol(axes_from=stack_groups[0])
-
-    stack_means = []
-    stack_vars = []
-    stack_num = 0
-
-    for group in stack_groups:
-
-        stacks = group.datasets["stack"][:]
-        stack_means.append(stacks.mean(axis=0))
-        stack_vars.append(stacks.var(axis=0))
-        stack_num += stacks.shape[0]
-
-    av.stack[:] = np.mean(stack_means, axis=0)
-    av.var = np.mean(stack_vars, axis=0)
-    av.num = stack_num
-
-    return av
-
-
-def load_all(paths: List[os.PathLike]) -> List[ContainerBase]:
-    """Load a set of container files from disk, skipping any corrupt ones."""
-
-    conts = []
-
-    for p in paths:
-        try:
-            c = ContainerBase.from_file(p)
-        except OSError:
-            logger.info(f"Error loading: {p}")
-
-        conts.append(c)
-
-    return conts
 
 
 class SignalTemplate:
@@ -109,7 +51,15 @@ class SignalTemplate:
         self._aliases = aliases if aliases is not None else {}
 
     @classmethod
-    def load_from_stackfiles(cls, pattern: str, **kwargs):
+    def load_from_stackfiles(
+        cls,
+        pattern: str,
+        pol: List[str] = None,
+        weight: npt.NDArray = None,
+        combine: bool = True,
+        sort: bool = True,
+        **kwargs,
+    ):
         """Load the signal template from a set of stack files.
 
         This will load the stack files from each location and try and compile them into
@@ -119,6 +69,16 @@ class SignalTemplate:
         ----------
         pattern
             A glob pattern that isolates the base signal templates.
+        pol
+            The desired polarisations.
+        weight
+            The weight to use when averaging over polarisations.
+            Must have shape [npol, nfreq].  Only relevant if combine is True.
+        combine
+            Add an element to the polarisatoin axis called I that
+            is the weighted sum of the XX and YY polarisation.
+        sort
+            Sort the frequency offset axis in ascending order.
         **kwargs
             Arguments passed on to the constructor.
         """
@@ -159,7 +119,11 @@ class SignalTemplate:
                 print("No files found at matching path.")
                 continue
 
-            stacks[key] = stack_av_group(load_all(stack_files))
+            mocks = utils.load_mocks(stack_files, pol=pol)
+            mocks.weight[:] = weight[np.newaxis, :] if weight is not None else 1.0
+            stacks[key] = utils.average_stacks(
+                mocks, pol=mocks.pol, combine=combine, sort=sort
+            )
 
         # Create the object and try and construct all the required templates from the
         # stacks
@@ -195,7 +159,8 @@ class SignalTemplate:
 
             return (
                 self._factor * stack.stack[:],
-                self._factor ** 2 * stack.var[:] / stack.num,
+                self._factor ** 2
+                * tools.invert_no_zero(stack.attrs["num"] * stack.weight[:]),
             )
 
         # For all linear component terms load them and construct the various HI,g,v

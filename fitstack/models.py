@@ -1,4 +1,5 @@
 """Define models that can be fit to the source stack."""
+import inspect
 
 import numpy as np
 
@@ -69,9 +70,10 @@ class Model(object):
         self.seed = seed
         self.rng = np.random.Generator(np.random.SFC64(seed))
 
+        defaults = self.default_param_spec()
         self.param_spec = {}
-        for name, default_spec in self._param_spec.items():
-            self.param_spec[name] = param_spec.get(name, default_spec)
+        for name in self.param_name:
+            self.param_spec[name] = param_spec.get(name, defaults[name])
 
         self.priors = {}
         for name, spec in self.param_spec.items():
@@ -228,6 +230,31 @@ class Model(object):
     def nfit(self):
         """The number of parameters that are being fit."""
         return len(self.param_name_fit)
+
+    @classmethod
+    def default_param_spec(cls):
+        """Get the default parameter specification.
+
+        Combines the default parameter specifications in the _param_spec attribute
+        of all classes in the MRO, with base-class values overridden when the
+        parameter name is repeated in a subclass.  Hence, when creating a new class,
+        the full parameter specification dictionary does not need to be repeated if
+        only a few parameters are being modified.
+        """
+
+        param_spec = {}
+
+        # Iterate over the reversed MRO and look for _param_spec attributes
+        # which get added to a temporary dict. We go over the reversed MRO so
+        # that values in base classes are overridden.
+        for c in inspect.getmro(cls)[::-1]:
+
+            if hasattr(c, "_param_spec"):
+
+                for key, val in c._param_spec.items():
+                    param_spec[key] = val
+
+        return param_spec
 
 
 class ScaledShiftedTemplate(Model):
@@ -420,8 +447,10 @@ class Exponential(Model):
         return model
 
 
-class SimulationTemplateBase(Model):
+class SimulationTemplate(Model):
     """Fit the stack data to simulation templates."""
+
+    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
     _param_spec = {
         "offset": {
@@ -429,66 +458,11 @@ class SimulationTemplateBase(Model):
             "value": 0.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 1.0,
+                "low": -0.8,
+                "high": 0.8,
             },
         },
         "omega": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": -10.0,
-                "high": 10.0,
-            },
-        },
-        "b_HI": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": -10.0,
-                "high": 10.0,
-            },
-        },
-        # This is the only parameter which is reasonably constrained
-        "b_g": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": 0.0,
-                "high": 2.0,
-            },
-        },
-        "NL": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": -1.0,
-                "high": 2.0,
-            },
-        },
-        "FoGh": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": 0.0,
-                "high": 3.0,
-            },
-        },
-        "FoGg": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": 0.0,
-                "high": 3.0,
-            },
-        },
-        "M_10": {
             "fixed": False,
             "value": 1.0,
             "prior": "Uniform",
@@ -497,50 +471,107 @@ class SimulationTemplateBase(Model):
                 "high": 5.0,
             },
         },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+        # This is the only parameter which is reasonably constrained.
+        # Use scale = 0.03 for QSO, 0.13 for LRG, and 0.10 for ELG.
+        "b_g": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Gaussian",
+            "kwargs": {
+                "loc": 1.00,
+                "scale": 0.03,
+            },
+        },
+        "NL": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -1.0,
+                "high": 7.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "FoGg": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "M_10": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 25.0,
+            },
+        },
     }
 
-    # Default base path
-    base_path = (
-        "/project/rpp-chime/chime/stacking/sims/analysis_stacks_comp/psbeam/psbeam/"
-    )
-
-    def __init__(self, *args, **kwargs):
-
-        pattern = (
-            self.base_path
-            + f"dataweight_compderiv*/post/datamask/{self.tracer}/{self.field}/"
-        )
-        factor = 1e3
+    def __init__(
+        self,
+        pattern,
+        factor=1e3,
+        pol=None,
+        weight=None,
+        combine=True,
+        sort=True,
+        *args,
+        **kwargs
+    ):
 
         self._signal_template = signal.SignalTemplate.load_from_stackfiles(
             pattern,
             factor=factor,
+            pol=pol,
+            weight=weight,
+            combine=combine,
+            sort=sort,
             aliases=dict(shotnoise="M_10"),
         )
 
-        self.param_name = list(self._param_spec.keys())
-
         super().__init__(*args, **kwargs)
 
-    def model(self, theta, freq=None, **kwargs):
+    def model(self, theta, freq=None, transfer=None, pol_sel=None):
 
         if freq is None:
             freq = self.freq
 
-        param_dict = {k: v for k, v in zip(self._param_spec.keys(), theta)}
+        if transfer is None:
+            transfer = self.transfer
 
-        offset = theta[0]
+        if pol_sel is None:
+            pol_sel = self.pol_sel
 
-        # Compute the model and extract the XX and YY polarisations
-        model_init = self._signal_template.signal(**param_dict)[[0, 3]]
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
-        model = utils.shift_and_convolve(freq, model_init, offset=offset, kernel=None)
+        offset = param_dict.pop("offset")
+
+        model_init = self._signal_template.signal(**param_dict)[pol_sel]
+
+        model = utils.shift_and_convolve(
+            freq, model_init, offset=offset, kernel=transfer
+        )
 
         return model
-
-
-# TODO: this would probably be cleaner if we could pass parameters through to the model
-# constructors
-class SimulationTemplateQSONGC(SimulationTemplateBase):
-    tracer = "QSO"
-    field = "NGC"

@@ -1,12 +1,13 @@
 """Utililites to prepare the data for the fit."""
 import os
 import glob
+from pathlib import Path
 
 import h5py
-
 import numpy as np
 from scipy.fftpack import next_fast_len
 
+from caput import misc
 from draco.util import tools
 
 from . import containers
@@ -271,6 +272,89 @@ def initialize_pol(cnt, pol=None, combine=False):
     return stack, weight, cpol
 
 
+def average_stacks(stacks, pol=None, combine=True, sort=True):
+    """Calculate the mean and variance of a set of stacks.
+
+    Parameters
+    ----------
+    stack : MockFrequencyStackByPol
+        Set of stacks to average.
+    pol : list of str
+        The polarisations to select.  If not provided,
+        then ["XX", "YY"] is assumed.
+    combine : bool
+        Add an element to the polarisation axis that is
+        the weighted sum of XX and YY.  Default is True.
+    sort : bool
+        Sort the frequency offset axis in ascending order.
+        Default is True.
+
+    Returns
+    -------
+    avg : FrequencyStackByPol
+        Container that has collapsed over the mock axis.
+        The stack dataset contains the mean and the weight
+        dataset contains the inverse variance.
+    """
+
+    sarr, _, spol = initialize_pol(stacks, pol=pol, combine=combine)
+    nstack = sarr.shape[0]
+
+    freq = stacks.freq
+    if sort:
+        isort = np.argsort(freq)
+        freq = freq[isort]
+        sarr = sarr[..., isort]
+
+    avg = containers.FrequencyStackByPol(
+        pol=np.array(spol), freq=freq, attrs_from=stacks
+    )
+
+    avg.attrs["num"] = nstack
+    avg.stack[:] = np.mean(sarr, axis=0)
+    avg.weight[:] = tools.invert_no_zero(np.var(sarr, axis=0))
+
+    return avg
+
+
+def load_pol(filename, pol=None):
+    """Load a file, down-selecting along the polarisation axis.
+
+    This is a wrapper for the from_file method of
+    container.BaseContainer that first opens the file
+    using h5py to determines the appropriate container type
+    and indices into the polarisation axis.
+
+    Parameters
+    ----------
+    filename : str
+        Name of the file.
+    pol : list of str
+        Desired polarisations.  Defaults to ["XX", "YY"].
+
+    Returns
+    -------
+    out : subclass of containers.BaseContainer
+        File in the appropriate container with
+        the requested polarisations.
+    """
+
+    if pol is None:
+        pol = ["XX", "YY"]
+
+    pol = np.atleast_1d(pol)
+
+    with h5py.File(filename, "r") as handler:
+        container_path = handler.attrs["__memh5_subclass"]
+        fpol = list(handler["index_map"]["pol"][:].astype(str))
+
+    ipol = np.array([fpol.index(pstr) for pstr in pol])
+
+    Container = misc.import_class(container_path)
+
+    return Container.from_file(filename, pol_sel=ipol)
+
+
 def load_mocks(mocks, pol=None):
     """Load the mock catalog stacks.
 
@@ -312,11 +396,8 @@ def load_mocks(mocks, pol=None):
 
         temp = []
         for mfile in mocks:
-            if isinstance(mfile, str):
-                pol_sel = determine_pol_sel(mfile, pol=pol)
-                temp.append(
-                    containers.MockFrequencyStackByPol.from_file(mfile, pol_sel=pol_sel)
-                )
+            if isinstance(mfile, (str, Path)):
+                temp.append(load_pol(mfile, pol=pol))
             else:
                 if not np.array_equal(mfile.pol, pol):
                     raise RuntimeError(
@@ -332,7 +413,9 @@ def load_mocks(mocks, pol=None):
         boundaries = np.concatenate(([0], np.cumsum(nmocks)))
 
         out = containers.MockFrequencyStackByPol(
-            mock=int(boundaries[-1]), axes_from=temp[0]
+            mock=np.arange(boundaries[-1], dtype=int),
+            axes_from=temp[0],
+            attrs_from=temp[0],
         )
 
         for mm, (mock, nm) in enumerate(zip(temp, nmocks)):
@@ -346,36 +429,6 @@ def load_mocks(mocks, pol=None):
             out.weight[slc_out] = mock.weight[:]
 
     return out
-
-
-def determine_pol_sel(filename, pol=None):
-    """Find indices into the pol axis of a file that yield the desired polarisations.
-
-    Parameters
-    ----------
-    filename : str
-        Name of the file.
-    pol : list of str
-        Desired polarisations.  Defaults to ["XX", "YY"].
-
-    Returns
-    -------
-    ipol : np.ndarray[npol,]
-        Array of indices into the polarisation axis that yields
-        the requested polarisations.
-    """
-
-    if pol is None:
-        pol = ["XX", "YY"]
-
-    pol = np.atleast_1d(pol)
-
-    with h5py.File(filename, "r") as handler:
-        fpol = list(handler["index_map"]["pol"][:].astype(str))
-
-    ipol = np.array([fpol.index(pstr) for pstr in pol])
-
-    return ipol
 
 
 def find_file(search):

@@ -77,6 +77,12 @@ class MCMCFit(ContainerBase):
             "initialise": True,
             "distributed": False,
         },
+        "fixed": {
+            "axes": ["param"],
+            "dtype": np.bool,
+            "initialise": True,
+            "distributed": False,
+        },
         "autocorr_time": {
             "axes": ["param"],
             "dtype": np.float64,
@@ -140,6 +146,14 @@ class MCMCFit(ContainerBase):
         return samples
 
     @property
+    def fit_index(self):
+        return np.flatnonzero(~self.datasets["fixed"][:])
+
+    @property
+    def fixed_index(self):
+        return np.flatnonzero(self.datasets["fixed"][:])
+
+    @property
     def slice_chain(self):
         """Create a slice along the step axis that discards burn-in and thins.
 
@@ -147,7 +161,7 @@ class MCMCFit(ContainerBase):
         autocorrelation length divided by 2.
         """
 
-        tau = int(np.max(self.datasets["autocorr_time"][:]))
+        tau = int(np.max(self.datasets["autocorr_time"][:][self.fit_index]))
         thin = tau // 2
         discard = tau * 10
 
