@@ -5,7 +5,7 @@ import inspect
 import numpy as np
 import emcee
 
-from caput import config
+from caput import config, pipeline
 
 from draco.util import tools
 from draco.core import task
@@ -20,6 +20,12 @@ logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
 PERCENTILE = [2.5, 16, 50, 84, 97.5]
+
+SIMULATION_MODELS = [
+    "SimulationTemplate",
+    "SimulationTemplateFoG",
+    "SimulationTemplateFoGAltParam",
+]
 
 
 # main script
@@ -72,7 +78,9 @@ def run_mcmc(
         Polarisation to fit.  Here "I" refers to the weighted sum of the
          "XX" and "YY" polarisations and "joint" refers to a simultaneous
         fit to the "XX" and "YY" polarisations.
-    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|"SimulationTemplate"}
+    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
+                  "SimulationTemplate"|"SimulationTemplateFoG"|
+                  "SimulationTemplateFoGAltParam"}
         Name of the model to fit.  Specify the class name from the
         fitstack.models module.
     scale : float
@@ -165,7 +173,7 @@ def run_mcmc(
                 container.weight[:] = inv_var[expand]
 
     # For the simulation template we need to provide parameters to average the polarisations
-    if model_name == "SimulationTemplate":
+    if model_name in SIMULATION_MODELS:
         model_kwargs["weight"] = inv_var if recompute_weight else data.weight[:]
         model_kwargs["pol"] = required_pol
         model_kwargs["combine"] = combine_pol
@@ -334,7 +342,7 @@ def run_mcmc(
         fit_kwargs["template"] = template_stack[ipol]
         eval_kwargs["template"] = template_stack[:]
 
-    if model_name == "SimulationTemplate":
+    if model_name in SIMULATION_MODELS:
         fit_kwargs["pol_sel"] = ipol
         eval_kwargs["pol_sel"] = slice(None)
 
@@ -410,9 +418,17 @@ class RunMCMC(task.SingleTask):
     which provides many useful features including profiling, job script
     generation, job templating, and saving the results to disk.
 
-    See the arguments of the run_mcmc method for a list of attributes
-    and their default values.
+    Attributes
+    ----------
+    max_iter : int
+        Number of times to call the run_mcmc method.
+        Defaults to 1.
+
+    See the arguments of the run_mcmc method for a list of
+    additional attributes and their default values.
     """
+
+    max_iter = config.Property(proptype=int, default=1)
 
     data = config.Property(proptype=str)
     mocks = config.Property(proptype=_list_or_glob)
@@ -459,7 +475,10 @@ class RunMCMC(task.SingleTask):
                 )
 
     def process(self):
-        """Fit a model to the source stack using a MCMC."""
+        """Fit a model to the source stack using an MCMC."""
+
+        if self._count == self.max_iter:
+            raise pipeline.PipelineStopIteration
 
         result = run_mcmc(**self.kwargs)
 

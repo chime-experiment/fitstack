@@ -55,7 +55,7 @@ class SignalTemplate:
         cls,
         pattern: str,
         pol: List[str] = None,
-        weight=None,
+        weight: np.ndarray = None,
         combine: bool = True,
         sort: bool = True,
         **kwargs,
@@ -248,13 +248,19 @@ class SignalTemplate:
         # Add in any derivative contributions
         for name, (_, x0) in self._derivs.items():
 
+            stack = _combine(self._stack_comp[name][0])
+
             name = self._aliases.get(name, name)
             if name not in kwargs:
                 raise ValueError(f"Need a value for deriv parameter {name}")
 
             x = kwargs[name]
 
-            signal += _combine(self._stack_comp[name][0]) * (x - x0)
+            signal += stack * (x - x0)
+
+        # Convolve signal with a kernel
+        # before adding in the non-component contributions
+        signal = self.convolve_pre_noncomp(signal, **kwargs)
 
         # Add in any non-component contributins
         for name, stack in self._stack_noncomp.items():
@@ -267,9 +273,21 @@ class SignalTemplate:
 
             signal += stack[0] * x
 
+        # Convolve signal with a kernel
+        # after adding in the non-component contributions
+        signal = self.convolve_post_noncomp(signal, **kwargs)
+
         # Scale by the overall prefactor
         signal *= omega
 
+        return signal
+
+    def convolve_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Override in subclass to convolve signal with kernel pre-non-components."""
+        return signal
+
+    def convolve_post_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Override in subclass to convolve signal with kernel post-non-components."""
         return signal
 
     @property
@@ -290,18 +308,24 @@ class SignalTemplate:
 class SignalTemplateFoG(SignalTemplate):
     """Create signal templates from pre-simulated modes and input parameters.
 
-    Performs a convolution of the stacked signal to simulate FoG damping,
-    in contrast to the SignalTemplate class that uses a linear model.
+    Reconvolves the stacked signal with a kernel to simulate FoG damping,
+    in contrast to the SignalTemplate class that uses a linear model for
+    the FoG damping.
 
     Parameters
     ----------
+    derivs
+        A dictionary of derivates expected, giving their name (key), and a tuple of the
+        parameter difference used in the simulations (between the perturbed sim and the
+        base values) and the fiducial value of the parameter.
     convolutions
         A dictionary of the expected convolution parameters, giving their name (key),
         and a tuple of the parameter difference used in the simulations (between the
         perturbed sim and the base values) and the fiducial value of the parameter.
     delay_range
-        The lower and upper boundary of the delay in micro-seconds that will be used to
-        fit for the effective scale of the convolution kernel.
+        The lower and upper boundary of the delay in micro-seconds that will
+        be used to fit for the effective scale of the base convolution kernel.
+        Defaults to (0.25, 0.80) micro-seconds.
     """
 
     def __init__(
@@ -330,22 +354,25 @@ class SignalTemplateFoG(SignalTemplate):
 
         super().__init__(derivs=derivs, *args, **kwargs)
 
-    def _solve_scale(self, base, deriv, alpha):
+    def _solve_scale(
+        self, base: FrequencyStackByPol, deriv: FrequencyStackByPol, alpha: float
+    ) -> np.ndarray:
         """Solve for the effective scale of the FoG damping.
 
         Parameters
         ----------
-        base : FrequencyStackByPol
+        base
             Stacked signal from simulations with the base parameters.
-        deriv : FrequencyStackByPol
+        deriv
             Stacked signal from simulations with the FoG parameter perturbed.
-        alpha : float
+        alpha
             The ratio of the FoG parameter for deriv relative to base.
 
         Returns
         -------
-        scale : float
-            The effective scale of the transfer function H(\tau) = 1 / (1 + (scale * \tau)^2)
+        scale : np.ndarray[npol,]
+            The effective scale of the transfer function:
+                H(\tau) = 1 / (1 + (scale * \tau)^2)
         """
 
         nfreq = self.freq.size
@@ -395,7 +422,7 @@ class SignalTemplateFoG(SignalTemplate):
 
         base = stacks["11-base"]
 
-        self._convolutions_scale = {}
+        self._convolution_scale = {}
 
         for name, (delta, x0) in self._convolutions.items():
 
@@ -408,10 +435,23 @@ class SignalTemplateFoG(SignalTemplate):
 
             # Determine the effective scale
             scale = self._solve_scale(base, stacks[key], alpha)
-            self._convolutions_scale[name] = scale
+            self._convolution_scale[name] = scale
 
-    def _apply_transfer_function(self, signal, **kwargs):
-        """Convolve the stacked signal with the FoG transfer function."""
+    def convolve_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Convolve the stacked signal with the relative FoG kernel.
+
+        Parameters
+        ----------
+        signal : np.ndarray[npol, nfreq]
+            The stacked signal before adding the non-component contributions.
+        kwargs : dict
+            All parameter values.
+
+        Returns
+        -------
+        signal : np.ndarray[npol, nfreq]
+            The input stacked signal after convolving with the relative FoG kernel.
+        """
 
         # Figure out the size needed to perform the convolution
         nfreq = self.freq.size
@@ -431,13 +471,14 @@ class SignalTemplateFoG(SignalTemplate):
 
         for name, (_, x0) in self._convolutions.items():
 
+            scale0 = self._convolution_scale[name][:, np.newaxis]
+
             name = self._aliases.get(name, name)
             if name not in kwargs:
-                raise ValueError(f"Need a value for deriv parameter {name}")
+                raise ValueError(f"Need a value for convolution parameter {name}")
 
             x = kwargs[name]
 
-            scale0 = self._convolutions_scale[name][:, np.newaxis]
             alpha = x / x0
             scale = alpha * scale0
 
@@ -446,63 +487,3 @@ class SignalTemplateFoG(SignalTemplate):
         signalc = np.fft.irfft(fft_signal * fft_transfer, fsize, axis=-1)[..., fslice]
 
         return signalc
-
-    def signal(
-        self, *, omega: float, b_HI: float, b_g: float, **kwargs: float
-    ) -> np.ndarray:
-        """Return the signal template for the given parameters.
-
-        Parameters
-        ----------
-        omega
-            Overall scaling.
-        b_HI
-            Scaling for the HI bias term.
-        b_g
-            Scaling for tracer bias term.
-        **kwargs
-            Values for all other derivative terms (e.g. NL) and non-component terms
-            (e.g. shotnoise).
-
-        Returns
-        -------
-        signal
-            Signal template for the given parameters. An array of [pol, freq offset].
-        """
-
-        def _combine(vec):
-            # Combine the bias terms and templates to get a new template
-            return b_HI * b_g * vec[0] + b_HI * vec[1] + b_g * vec[2] + vec[3]
-
-        # Generate the signal for the base model
-        signal = _combine(self._stack_comp["base"][0])
-
-        # Add in any derivative contributions
-        for name, (_, x0) in self._derivs.items():
-
-            name = self._aliases.get(name, name)
-            if name not in kwargs:
-                raise ValueError(f"Need a value for deriv parameter {name}")
-
-            x = kwargs[name]
-
-            signal += _combine(self._stack_comp[name][0]) * (x - x0)
-
-        # Convolve with the updated transfer function
-        signal = self._apply_transfer_function(signal, **kwargs)
-
-        # Add in any non-component contributins
-        for name, stack in self._stack_noncomp.items():
-
-            name = self._aliases.get(name, name)
-            if name not in kwargs:
-                raise ValueError(f"Need a value for non-comp parameter {name}")
-
-            x = kwargs[name]
-
-            signal += stack[0] * x
-
-        # Scale by the overall prefactor
-        signal *= omega
-
-        return signal

@@ -3,6 +3,8 @@ import inspect
 
 import numpy as np
 
+from draco.util import tools
+
 from . import priors
 from . import signal
 from . import utils
@@ -448,7 +450,7 @@ class Exponential(Model):
 
 
 class SimulationTemplate(Model):
-    """Fit the stack data to simulation templates."""
+    """Model consisting of a linear combination of templates from simulations."""
 
     param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
@@ -532,23 +534,29 @@ class SimulationTemplate(Model):
     def __init__(
         self,
         pattern,
-        factor=1e3,
         pol=None,
         weight=None,
         combine=True,
         sort=True,
+        derivs=None,
+        factor=1e3,
+        aliases=None,
         *args,
         **kwargs
     ):
 
+        if aliases is None:
+            aliases = dict(shotnoise="M_10")
+
         self._signal_template = signal.SignalTemplate.load_from_stackfiles(
             pattern,
-            factor=factor,
             pol=pol,
             weight=weight,
             combine=combine,
             sort=sort,
-            aliases=dict(shotnoise="M_10"),
+            derivs=derivs,
+            factor=factor,
+            aliases=aliases,
         )
 
         super().__init__(*args, **kwargs)
@@ -567,6 +575,143 @@ class SimulationTemplate(Model):
         param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
         offset = param_dict.pop("offset")
+
+        model_init = self._signal_template.signal(**param_dict)[pol_sel]
+
+        model = utils.shift_and_convolve(
+            freq, model_init, offset=offset, kernel=transfer
+        )
+
+        return model
+
+
+class SimulationTemplateFoG(SimulationTemplate):
+    """Model based on templates from simulations convolved with a FoG damping kernel."""
+
+    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+        "FoGg": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+    }
+
+    def __init__(
+        self,
+        pattern,
+        pol=None,
+        weight=None,
+        combine=True,
+        sort=True,
+        derivs=None,
+        convolutions=None,
+        delay_range=None,
+        factor=1e3,
+        aliases=None,
+        *args,
+        **kwargs
+    ):
+
+        if aliases is None:
+            aliases = dict(shotnoise="M_10")
+
+        self._signal_template = signal.SignalTemplateFoG.load_from_stackfiles(
+            pattern,
+            pol=pol,
+            weight=weight,
+            combine=combine,
+            sort=sort,
+            derivs=derivs,
+            convolutions=convolutions,
+            delay_range=delay_range,
+            factor=factor,
+            aliases=aliases,
+        )
+
+        super(SimulationTemplate, self).__init__(*args, **kwargs)
+
+
+class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
+    """Model based on templates from simulations convolved with a FoG damping kernel.
+
+    This uses an alternative parameterization of (Omega, Omega x b_HI, ...) compared to
+    the (Omega, b_HI, ...) parameterization used in the SimulationTemplate and
+    SimulationTemplateFoG models.
+    """
+
+    param_name = ["offset", "omega", "omega b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "omega b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+    }
+
+    def model(self, theta, freq=None, transfer=None, pol_sel=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        offset = param_dict.pop("offset")
+
+        omega_bHI = param_dict.pop("omega b_HI")
+        param_dict["b_HI"] = omega_bHI * tools.invert_no_zero(param_dict["omega"])
 
         model_init = self._signal_template.signal(**param_dict)[pol_sel]
 
