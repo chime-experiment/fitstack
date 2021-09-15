@@ -5,7 +5,7 @@ import inspect
 import numpy as np
 import emcee
 
-from caput import config
+from caput import config, pipeline
 
 from draco.util import tools
 from draco.core import task
@@ -18,6 +18,19 @@ from . import models
 # Set up logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
+
+
+def _all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in _all_subclasses(c)]
+    )
+
+
+SIMULATION_MODELS = [
+    c.__name__
+    for c in [models.SimulationTemplate]
+    + list(_all_subclasses(models.SimulationTemplate))
+]
 
 PERCENTILE = [2.5, 16, 50, 84, 97.5]
 
@@ -38,7 +51,8 @@ def run_mcmc(
     normalize_template=False,
     mean_subtract=True,
     recompute_weight=True,
-    prior_spec=None,
+    model_kwargs=None,
+    param_spec=None,
     seed=None,
 ):
     """Fit a model to the source stack using an MCMC.
@@ -71,7 +85,9 @@ def run_mcmc(
         Polarisation to fit.  Here "I" refers to the weighted sum of the
          "XX" and "YY" polarisations and "joint" refers to a simultaneous
         fit to the "XX" and "YY" polarisations.
-    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"}
+    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
+                  "SimulationTemplate"|"SimulationTemplateFoG"|
+                  "SimulationTemplateFoGAltParam"}
         Name of the model to fit.  Specify the class name from the
         fitstack.models module.
     scale : float
@@ -102,9 +118,12 @@ def run_mcmc(
         This is only used when averaging the "XX" and "YY" polarisations to
         determine the "I" polarisation.  Otherwise whatever weight dataset
         is saved to the file will be used.  Default is True.
-    prior_spec : dict
+    param_spec : dict
         Dictionary that specifies the prior distribution for each parameter.
         See the docstring for the models.Model attribute for the correct format.
+    model_kwargs : dict
+        Dictionary that contains any keyword arguments that should be passed
+        to the model class at initialization.
     seed : int
         Seed to use for random number generation.  If the seed is not provided,
         then a random seed will be taken from system entropy.
@@ -123,17 +142,19 @@ def run_mcmc(
     required_pol = ["XX", "YY"]
     combine_pol = True
 
+    if param_spec is None:
+        param_spec = {}
+
+    if model_kwargs is None:
+        model_kwargs = {}
+
     # Load the data
     if isinstance(data, str):
-        data = utils.find_file(data)
-        pol_sel = utils.determine_pol_sel(data, pol=required_pol)
-        data = containers.FrequencyStackByPol.from_file(data, pol_sel=pol_sel)
+        data = utils.load_pol(utils.find_file(data), pol=required_pol)
 
     # Load the transfer function
     if transfer is not None and isinstance(transfer, str):
-        transfer = utils.find_file(transfer)
-        pol_sel = utils.determine_pol_sel(transfer, pol=required_pol)
-        transfer = containers.FrequencyStackByPol.from_file(transfer, pol_sel=pol_sel)
+        transfer = utils.load_pol(utils.find_file(transfer), pol=required_pol)
 
     # Load the templates
     if template is not None:
@@ -157,6 +178,13 @@ def run_mcmc(
                     for ax in container.weight.attrs["axis"]
                 )
                 container.weight[:] = inv_var[expand]
+
+    # For the simulation template we need to provide parameters to average the polarisations
+    if model_name in SIMULATION_MODELS:
+        model_kwargs["weight"] = inv_var if recompute_weight else data.weight[:]
+        model_kwargs["pol"] = required_pol
+        model_kwargs["combine"] = combine_pol
+        model_kwargs["sort"] = True
 
     # Determine the frequencies to fit
     freq = data.freq[:]
@@ -193,12 +221,11 @@ def run_mcmc(
         transfer_stack = transfer_stack[..., isort]
 
     if template is not None:
-        template_stack, _, _ = utils.initialize_pol(
-            template, pol=required_pol, combine=combine_pol
-        )
-
         # Use the mean value of the template over realizations
-        template_stack = scale * np.mean(template_stack, axis=0)[..., isort]
+        template = utils.average_stacks(
+            template, pol=required_pol, combine=combine_pol, sort=True
+        )
+        template_stack = scale * template.stack[:]
 
         if normalize_template:
             max_template = np.max(
@@ -215,7 +242,7 @@ def run_mcmc(
 
     # Prepare the model
     Model = getattr(models, model_name)
-    model = Model(seed=seed, **prior_spec)
+    model = Model(seed=seed, **{**model_kwargs, **param_spec})
 
     param_name = model.param_name
     nparam = len(param_name)
@@ -274,6 +301,9 @@ def run_mcmc(
     results["weight"][:] = weight_stack
     results["freq_flag"][:] = freq_flag
 
+    results["fixed"][:] = True
+    results["fixed"][:][model.fit_index] = False
+
     if transfer is not None:
         results.add_dataset("transfer_function")
         results["transfer_function"][:] = transfer_stack
@@ -319,6 +349,10 @@ def run_mcmc(
         fit_kwargs["template"] = template_stack[ipol]
         eval_kwargs["template"] = template_stack[:]
 
+    if model_name in SIMULATION_MODELS:
+        fit_kwargs["pol_sel"] = ipol
+        eval_kwargs["pol_sel"] = slice(None)
+
     model.set_data(**fit_kwargs)
 
     # Determine starting point for chains in parameter space
@@ -351,9 +385,13 @@ def run_mcmc(
 
     # Save the results to the output container
     results["chain"][:] = chain_all
-    results["autocorr_time"][:] = sampler.get_autocorr_time(quiet=True)
+
+    results["autocorr_time"][:] = 0.0
+    results["autocorr_time"][:][model.fit_index] = sampler.get_autocorr_time(quiet=True)
+
     results["acceptance_fraction"][:] = sampler.acceptance_fraction
-    results["model_min_chisq"][ipol] = model.model(theta_min, **eval_kwargs)
+
+    results["model_min_chisq"][:] = model.model(theta_min, **eval_kwargs)
 
     # Discard burn in and thin the chains
     flat_samples = results.samples(flat=True)
@@ -370,7 +408,7 @@ def run_mcmc(
     # Compute percentiles of the model
     mdl = np.zeros((flat_samples.shape[0], npol, nfreq), dtype=np.float32)
     for ss, theta in enumerate(flat_samples):
-        mdl[ss, ipol] = model.model(theta, **eval_kwargs)
+        mdl[ss] = model.model(theta, **eval_kwargs)
 
     results["model_percentile"][:] = np.percentile(mdl, PERCENTILE, axis=0).transpose(
         1, 2, 0
@@ -387,9 +425,17 @@ class RunMCMC(task.SingleTask):
     which provides many useful features including profiling, job script
     generation, job templating, and saving the results to disk.
 
-    See the arguments of the run_mcmc method for a list of attributes
-    and their default values.
+    Attributes
+    ----------
+    max_iter : int
+        Number of times to call the run_mcmc method.
+        Defaults to 1.
+
+    See the arguments of the run_mcmc method for a list of
+    additional attributes and their default values.
     """
+
+    max_iter = config.Property(proptype=int, default=1)
 
     data = config.Property(proptype=str)
     mocks = config.Property(proptype=_list_or_glob)
@@ -409,7 +455,8 @@ class RunMCMC(task.SingleTask):
     mean_subtract = config.Property(proptype=bool)
     recompute_weight = config.Property(proptype=bool)
 
-    prior_spec = config.Property(proptype=dict)
+    param_spec = config.Property(proptype=dict)
+    model_kwargs = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
 
     def setup(self):
@@ -435,7 +482,10 @@ class RunMCMC(task.SingleTask):
                 )
 
     def process(self):
-        """Fit a model to the source stack using a MCMC."""
+        """Fit a model to the source stack using an MCMC."""
+
+        if self._count == self.max_iter:
+            raise pipeline.PipelineStopIteration
 
         result = run_mcmc(**self.kwargs)
 
