@@ -19,13 +19,20 @@ from . import models
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())
 
-PERCENTILE = [2.5, 16, 50, 84, 97.5]
+
+def _all_subclasses(cls):
+    return set(cls.__subclasses__()).union(
+        [s for c in cls.__subclasses__() for s in _all_subclasses(c)]
+    )
+
 
 SIMULATION_MODELS = [
-    "SimulationTemplate",
-    "SimulationTemplateFoG",
-    "SimulationTemplateFoGAltParam",
+    c.__name__
+    for c in [models.SimulationTemplate]
+    + list(_all_subclasses(models.SimulationTemplate))
 ]
+
+PERCENTILE = [2.5, 16, 50, 84, 97.5]
 
 
 # main script

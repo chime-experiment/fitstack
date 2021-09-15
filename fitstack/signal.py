@@ -75,7 +75,7 @@ class SignalTemplate:
             The weight to use when averaging over polarisations.
             Must have shape [npol, nfreq].  Only relevant if combine is True.
         combine
-            Add an element to the polarisatoin axis called I that
+            Add an element to the polarisation axis called I that
             is the weighted sum of the XX and YY polarisation.
         sort
             Sort the frequency offset axis in ascending order.
