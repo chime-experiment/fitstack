@@ -361,11 +361,11 @@ def run_mcmc(
     nwalker, ndim = pos.shape
 
     # Create the sampler and run the MCMC
-    sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability)
+    sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability_sampler)
 
-    sampler.run_mcmc(pos, nsample, progress=False)
+    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=False)
 
-    chain = sampler.get_chain()
+    chain = model.backward_transform_sampler(sampler.get_chain())
 
     # Compute the chisq
     chisq = results["chisq"][:].view(np.ndarray)

@@ -36,7 +36,7 @@ class SignalTemplate:
     def __init__(
         self,
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
-        factor: float = 1e-3,
+        factor: float = 1.0,
         aliases: Optional[Dict[str, str]] = None,
     ):
 
@@ -262,7 +262,10 @@ class SignalTemplate:
         # before adding in the non-component contributions
         signal = self.convolve_pre_noncomp(signal, **kwargs)
 
-        # Add in any non-component contributins
+        # Scale by the overall prefactor
+        signal *= omega
+
+        # Add in any non-component contributions
         for name, stack in self._stack_noncomp.items():
 
             name = self._aliases.get(name, name)
@@ -276,9 +279,6 @@ class SignalTemplate:
         # Convolve signal with a kernel
         # after adding in the non-component contributions
         signal = self.convolve_post_noncomp(signal, **kwargs)
-
-        # Scale by the overall prefactor
-        signal *= omega
 
         return signal
 
