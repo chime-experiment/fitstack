@@ -309,10 +309,9 @@ class Model(object):
         lp
             The log probability of the sample.
         """
-        return (
-            self.log_probability(self.backward_transform_sampler(theta)) +
-            self.log_transform_measure(theta)
-        )
+        return self.log_probability(
+            self.backward_transform_sampler(theta)
+        ) + self.log_transform_measure(theta)
 
     def log_transform_measure(self, theta: np.ndarray) -> float:
         return 0.0

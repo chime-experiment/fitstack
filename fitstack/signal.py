@@ -58,6 +58,7 @@ class SignalTemplate:
         weight: np.ndarray = None,
         combine: bool = True,
         sort: bool = True,
+        symmetrize: bool = False,
         **kwargs,
     ):
         """Load the signal template from a set of stack files.
@@ -124,6 +125,15 @@ class SignalTemplate:
             stacks[key] = utils.average_stacks(
                 mocks, pol=mocks.pol, combine=combine, sort=sort
             )
+
+            # TODO: this presumes that 0 is the central element
+            if symmetrize:
+                stacks[key].stack[:] = 0.5 * (
+                    stacks[key].stack[:] + stacks[key].stack[..., ::-1]
+                )
+                stacks[key].weight[:] = 0.5 * (
+                    stacks[key].weight[:] + stacks[key].weight[..., ::-1]
+                )
 
         # Create the object and try and construct all the required templates from the
         # stacks
