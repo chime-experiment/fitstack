@@ -601,7 +601,7 @@ class SimulationTemplate(Model):
         combine=True,
         sort=True,
         derivs=None,
-        factor=1e3,
+        factor=1e6,
         aliases=None,
         *args,
         **kwargs
@@ -611,7 +611,7 @@ class SimulationTemplate(Model):
             derivs = {"lin": (-1.0, 1.0)}
 
         if aliases is None:
-            aliases = {"shotnoise": "M_10", "lin": "N"}
+            aliases = {"shotnoise": "M_10", "lin": "NL"}
 
         self._signal_template = self._template_class.load_from_stackfiles(
             pattern,
