@@ -590,6 +590,9 @@ class SimulationTemplate(Model):
         },
     }
 
+    _template_class = signal.SignalTemplate
+    _template_kwargs = ()
+
     def __init__(
         self,
         pattern,
@@ -610,7 +613,7 @@ class SimulationTemplate(Model):
         if aliases is None:
             aliases = {"shotnoise": "M_10", "lin": "N"}
 
-        self._signal_template = signal.SignalTemplate.load_from_stackfiles(
+        self._signal_template = self._template_class.load_from_stackfiles(
             pattern,
             pol=pol,
             weight=weight,
@@ -619,6 +622,7 @@ class SimulationTemplate(Model):
             derivs=derivs,
             factor=factor,
             aliases=aliases,
+            **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
         )
 
         super().__init__(*args, **kwargs)
@@ -691,39 +695,8 @@ class SimulationTemplateFoG(SimulationTemplate):
         },
     }
 
-    def __init__(
-        self,
-        pattern,
-        pol=None,
-        weight=None,
-        combine=True,
-        sort=True,
-        derivs=None,
-        convolutions=None,
-        delay_range=None,
-        factor=1e6,
-        aliases=None,
-        *args,
-        **kwargs
-    ):
-
-        if aliases is None:
-            aliases = dict(shotnoise="M_10")
-
-        self._signal_template = signal.SignalTemplateFoG.load_from_stackfiles(
-            pattern,
-            pol=pol,
-            weight=weight,
-            combine=combine,
-            sort=sort,
-            derivs=derivs,
-            convolutions=convolutions,
-            delay_range=delay_range,
-            factor=factor,
-            aliases=aliases,
-        )
-
-        super(SimulationTemplate, self).__init__(*args, **kwargs)
+    _template_class = signal.SignalTemplateFoG
+    _template_kwargs = ("convolutions", "delay_range")
 
 
 class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
