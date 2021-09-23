@@ -309,7 +309,13 @@ class Model(object):
         lp
             The log probability of the sample.
         """
-        return self.log_probability(self.backward_transform_sampler(theta))
+        return (
+            self.log_probability(self.backward_transform_sampler(theta)) +
+            self.log_transform_measure(theta)
+        )
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        return 0.0
 
 
 class ScaledShiftedTemplate(Model):
@@ -798,3 +804,6 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
         newsample = sample.copy()
         newsample[..., 2] = sample[..., 2] / sample[..., 1]
         return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        return -np.log(np.abs(theta[..., 1]))
