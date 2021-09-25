@@ -49,6 +49,9 @@ class SignalTemplate:
         self._derivs = derivs
         self._factor = factor
         self._aliases = aliases if aliases is not None else {}
+        logger.debug(f"Using deriv modes: {self._derivs}")
+        logger.debug(f"Using aliases: {self._aliases}")
+        logger.debug(f"Using factor: {self._factor}")
 
     @classmethod
     def load_from_stackfiles(
@@ -132,11 +135,13 @@ class SignalTemplate:
             )
 
             if reverse:
+                logger.debug(f"Reversing stack {key}")
                 stacks[key].stack[:] = stacks[key].stack[..., ::-1]
                 stacks[key].weight[:] = stacks[key].weight[..., ::-1]
 
             # TODO: this presumes that 0 is the central element
             if symmetrize:
+                logger.debug(f"Symmetrizing stack {key}")
                 stacks[key].stack[:] = 0.5 * (
                     stacks[key].stack[:] + stacks[key].stack[..., ::-1]
                 )
@@ -185,6 +190,7 @@ class SignalTemplate:
         # For all linear component terms load them and construct the various HI,g,v
         # combination terms
         for term in compterms:
+            logger.debug(f"Combining mode {term}")
 
             s00, v00 = _check_load_stack(f"00-{term}")
             s01, v01 = _check_load_stack(f"01-{term}")
@@ -215,6 +221,7 @@ class SignalTemplate:
         # For the expected derivative modes combine the perturbed entry and the base
         # templates to get the derivative templates
         for name, (delta, _) in self._derivs.items():
+            logger.debug(f"Interpreting derivative mode {name}")
 
             if name not in stack_modes:
                 raise RuntimeError(f"Expected derivative {name} but could not load it.")
@@ -232,6 +239,7 @@ class SignalTemplate:
         # bias and Kaiser factors (such as shot noise)
         noncompterms = [k for k in stacks.keys() if "-" not in k]
         for term in noncompterms:
+            logger.debug(f"Interpreting non-component mode {term}")
             self._stack_noncomp[term] = _check_load_stack(term)
 
     def signal(
@@ -372,6 +380,8 @@ class SignalTemplateFoG(SignalTemplate):
         self._delay_range = delay_range
 
         super().__init__(derivs=derivs, *args, **kwargs)
+        logger.debug(f"Using convolutions: {self._convolutions}")
+        logger.debug(f"Fitting delay range: {self._delay_range}")
 
     def _solve_scale(
         self, base: FrequencyStackByPol, deriv: FrequencyStackByPol, alpha: float

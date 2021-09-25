@@ -768,6 +768,7 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
 
     def __init__(self, pattern: str, data_reverse: bool = False, *args, **kwargs):
         self._data_reverse = data_reverse
+        print(f"data reversing: {self._data_reverse}")
         super().__init__(pattern, *args, **kwargs)
 
     def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
