@@ -695,8 +695,9 @@ class SimulationTemplateFoG(SimulationTemplate):
     }
 
     _template_class = signal.SignalTemplateFoG
-    _template_kwargs = (
-        SimulationTemplate._template_kwargs + ("convolutions", "delay_range")
+    _template_kwargs = SimulationTemplate._template_kwargs + (
+        "convolutions",
+        "delay_range",
     )
 
 
@@ -765,6 +766,10 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
     the results are returned in the original basis.
     """
 
+    def __init__(self, pattern: str, data_reverse: bool = False, *args, **kwargs):
+        self._data_reverse = data_reverse
+        super().__init__(pattern, *args, **kwargs)
+
     def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
         """Transform to an Omega, Omega_b_HI basis."""
 
@@ -781,3 +786,35 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
 
     def log_transform_measure(self, theta: np.ndarray) -> float:
         return -np.log(np.abs(theta[..., 1]))
+
+    def log_likelihood(self, theta):
+        """Evaluate the log of the likelihood.
+
+        Parameters
+        ----------
+        theta : list
+            Values for the fit parameters.
+
+        Returns
+        -------
+        logL : float
+            Logarithm of the likelihood function.
+        """
+
+        theta_all = self.get_all_params(theta)
+
+        mdl = self.model(theta_all)
+
+        if self._data_reverse:
+            # Reverse the frequency axis
+            data = self.data[..., ::-1]
+            npol, nfreq = data.shape
+            inv_cov = self.inv_cov.reshape(npol, nfreq, npol, nfreq)
+            inv_cov = inv_cov[:, ::-1, :, ::-1].reshape(npol * nfreq, npol * nfreq)
+        else:
+            data = self.data
+            inv_cov = self.inv_cov
+
+        residual = np.ravel(data - mdl)
+
+        return -0.5 * np.matmul(residual.T, np.matmul(inv_cov, residual))
