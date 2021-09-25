@@ -59,6 +59,7 @@ class SignalTemplate:
         combine: bool = True,
         sort: bool = True,
         symmetrize: bool = False,
+        reverse: bool = False,
         **kwargs,
     ):
         """Load the signal template from a set of stack files.
@@ -80,6 +81,10 @@ class SignalTemplate:
             is the weighted sum of the XX and YY polarisation.
         sort
             Sort the frequency offset axis in ascending order.
+        symmetrize
+            Explicitly symmetrize the templates.
+        reverse
+            Reverse the templates. Useful for testing symmetry effects.
         **kwargs
             Arguments passed on to the constructor.
         """
@@ -125,6 +130,10 @@ class SignalTemplate:
             stacks[key] = utils.average_stacks(
                 mocks, pol=mocks.pol, combine=combine, sort=sort
             )
+
+            if reverse:
+                stacks[key].stack[:] = stacks[key].stack[..., ::-1]
+                stacks[key].weight[:] = stacks[key].weight[..., ::-1]
 
             # TODO: this presumes that 0 is the central element
             if symmetrize:

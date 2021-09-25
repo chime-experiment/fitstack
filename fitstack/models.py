@@ -590,7 +590,7 @@ class SimulationTemplate(Model):
     }
 
     _template_class = signal.SignalTemplate
-    _template_kwargs = ()
+    _template_kwargs = ("symmetrize", "reverse")
 
     def __init__(
         self,
@@ -695,7 +695,9 @@ class SimulationTemplateFoG(SimulationTemplate):
     }
 
     _template_class = signal.SignalTemplateFoG
-    _template_kwargs = ("convolutions", "delay_range")
+    _template_kwargs = (
+        SimulationTemplate._template_kwargs + ("convolutions", "delay_range")
+    )
 
 
 class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
