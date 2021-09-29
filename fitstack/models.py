@@ -545,8 +545,11 @@ class SimulationTemplate(Model):
         **kwargs
     ):
 
+        if derivs is None:
+            derivs = {"lin": (-1.0, 1.0)}
+
         if aliases is None:
-            aliases = dict(shotnoise="M_10")
+            aliases = {"shotnoise": "M_10", "lin": "N"}
 
         self._signal_template = signal.SignalTemplate.load_from_stackfiles(
             pattern,
@@ -639,7 +642,7 @@ class SimulationTemplateFoG(SimulationTemplate):
         derivs=None,
         convolutions=None,
         delay_range=None,
-        factor=1e3,
+        factor=1e6,
         aliases=None,
         *args,
         **kwargs
@@ -672,7 +675,7 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
     SimulationTemplateFoG models.
     """
 
-    param_name = ["offset", "omega", "omega b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+    param_name = ["offset", "omega", "omega_b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
     _param_spec = {
         "omega": {
@@ -684,7 +687,7 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
                 "high": 5.0,
             },
         },
-        "omega b_HI": {
+        "omega_b_HI": {
             "fixed": False,
             "value": 1.0,
             "prior": "Uniform",
@@ -710,7 +713,7 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
 
         offset = param_dict.pop("offset")
 
-        omega_bHI = param_dict.pop("omega b_HI")
+        omega_bHI = param_dict.pop("omega_b_HI")
         param_dict["b_HI"] = omega_bHI * tools.invert_no_zero(param_dict["omega"])
 
         model_init = self._signal_template.signal(**param_dict)[pol_sel]
