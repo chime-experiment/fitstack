@@ -258,6 +258,65 @@ class Model(object):
 
         return param_spec
 
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Take a sample (or set of) and transform into the basis used by the sampler.
+
+        Use this to transform into a basis that is more easily traversed by the sampler.
+        Must be an inverse of `backward_transform_sampler`.
+
+        Parameters
+        ----------
+        sample
+            A 1D array containing a single sample, or a 2D array containing rows of
+            samples.
+
+        Returns
+        -------
+        transformed_samples
+            The sample transformed into the samplers basis.
+        """
+        return sample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Take a sample (or set of) and transform from the basis used by the sampler.
+
+        Use this to transform from a basis that is more easily traversed by the sampler.
+        Must be an inverse of `forward_transform_sampler`.
+
+        Parameters
+        ----------
+        sample
+            A 1D array containing a single sample, or a 2D array containing rows of
+            samples in the basis used by the sampler.
+
+        Returns
+        -------
+        original_samples
+            The sample(s) transformed into the original basis.
+        """
+        return sample
+
+    def log_probability_sampler(self, theta: np.ndarray) -> float:
+        """A log probability function in the sampler's basis.
+
+        Parameters
+        ----------
+        theta
+            Coordinate vector in the samplers basis.
+
+        Returns
+        -------
+        lp
+            The log probability of the sample.
+        """
+        return (
+            self.log_probability(self.backward_transform_sampler(theta)) +
+            self.log_transform_measure(theta)
+        )
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        return 0.0
+
 
 class ScaledShiftedTemplate(Model):
     """Scaled and shifted template model."""
@@ -723,3 +782,28 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
         )
 
         return model
+
+
+class SimulationTemplateFoGTransform(SimulationTemplateFoG):
+    """An FoG damped template that samples in a decorrelated basis.
+
+    This uses an alternative basis of (Omega, Omega x b_HI, ...) for the sampler, but
+    the results are returned in the original basis.
+    """
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        newsample[..., 2] = sample[..., 1] * sample[..., 2]
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        newsample[..., 2] = sample[..., 2] / sample[..., 1]
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        return -np.log(np.abs(theta[..., 1]))
