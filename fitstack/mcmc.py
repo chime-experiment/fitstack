@@ -54,6 +54,7 @@ def run_mcmc(
     model_kwargs=None,
     param_spec=None,
     seed=None,
+    flag_ind=None,
 ):
     """Fit a model to the source stack using an MCMC.
 
@@ -127,6 +128,9 @@ def run_mcmc(
     seed : int
         Seed to use for random number generation.  If the seed is not provided,
         then a random seed will be taken from system entropy.
+    flag_ind : list
+        List of extra indices to flag. These are indices into the flattened data *after*
+        all other selections have been applied.
 
     Returns
     -------
@@ -271,6 +275,14 @@ def run_mcmc(
             f"Do not recognize polarisation {pol_fit}, "
             "possible values are 'XX', 'YY', 'I' or 'joint'"
         )
+
+    # Apply extra flagging if specified
+    if flag_ind is not None:
+        logger.debug(f"Flagging out extra data: starting with {len(ifit)} samples.")
+        ifit = [fi for ii, fi in enumerate(ifit) if ii not in flag_ind]
+        logger.debug(f"Ending with {len(ifit)} samples.")
+    else:
+        logger.debug("No samples flagged out.")
 
     pol = np.array(pol)
     x = np.zeros(nfreq * npol_fit, dtype=[("pol", "U8"), ("freq", np.float64)])
@@ -457,6 +469,7 @@ class RunMCMC(task.SingleTask):
     param_spec = config.Property(proptype=dict)
     model_kwargs = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
+    flag_ind = config.list_type(type_=int)
 
     def setup(self):
         """Prepare all arguments to the run_mcmc function."""
@@ -468,7 +481,6 @@ class RunMCMC(task.SingleTask):
             k: v.default if v.default is not inspect.Parameter.empty else None
             for k, v in signature.parameters.items()
         }
-
         self.kwargs = {}
         for key, default_val in defaults.items():
             if hasattr(self, key):
