@@ -199,7 +199,6 @@ def run_mcmc(
         freq_flag = np.ones(nfreq, dtype=bool)
 
     freq_index = np.flatnonzero(freq_flag)
-    freq_slice = slice(freq_index[0], freq_index[-1] + 1)
 
     # Initialize all arrays
     data_stack, weight_stack, pol = utils.initialize_pol(
@@ -229,7 +228,7 @@ def run_mcmc(
 
         if normalize_template:
             max_template = np.max(
-                template_stack[..., freq_slice], axis=-1, keepdims=True
+                template_stack[..., freq_index], axis=-1, keepdims=True
             )
             template_stack = template_stack / max_template
 
@@ -258,7 +257,7 @@ def run_mcmc(
         npol_fit = 1
 
         C = cov[ipol, ipol]
-        ifit = freq_slice
+        ifit = freq_index
 
     elif pol_fit == "joint":
         ipol = np.array([pol.index(pstr) for pstr in ["XX", "YY"]])
