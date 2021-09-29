@@ -1,5 +1,6 @@
 """Define models that can be fit to the source stack."""
 import inspect
+import logging
 
 import numpy as np
 
@@ -8,6 +9,9 @@ from draco.util import tools
 from . import priors
 from . import signal
 from . import utils
+
+
+logger = logging.getLogger(__name__)
 
 
 class Model(object):
@@ -603,7 +607,7 @@ class SimulationTemplate(Model):
         factor=1e6,
         aliases=None,
         *args,
-        **kwargs
+        **kwargs,
     ):
 
         if derivs is None:
@@ -762,31 +766,63 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
 class SimulationTemplateFoGTransform(SimulationTemplateFoG):
     """An FoG damped template that samples in a decorrelated basis.
 
-    This uses an alternative basis of (Omega, Omega x b_HI, ...) for the sampler, but
-    the results are returned in the original basis.
+    This uses an alternative basis replacing various parameters to decorrelate the
+    chains:
+
+    - `b_HI -> omega_b_HI = omega * b_HI`
+    - `FoGh -> FoG+ = log(FoGh * FoGg) / 2`
+    - `FoGg -> FoG- = log(FoGh / FoGg) / 2
+
+    However, the chains are returned (and priors applied) in the original basis.
+
+    Parameters
+    ----------
+    pattern
+        Glob pattern to find the signal template modes.
+    data_reverse
+        Reverse the frequency offset axis in the data before evaluating the likelihood.
+        This is useful for testing issues in the signal generation.
     """
 
     def __init__(self, pattern: str, data_reverse: bool = False, *args, **kwargs):
         self._data_reverse = data_reverse
-        print(f"data reversing: {self._data_reverse}")
+        logger.debug(f"Reversing the data before sampling: {self._data_reverse}")
         super().__init__(pattern, *args, **kwargs)
 
     def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
-        """Transform to an Omega, Omega_b_HI basis."""
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
 
         newsample = sample.copy()
         newsample[..., 2] = sample[..., 1] * sample[..., 2]
+
+        # Transform to FoG+ and FoG- parameters for sampling
+        newsample[..., 5] = 0.5 * np.log(sample[..., 5] * sample[..., 6])
+        newsample[..., 6] = 0.5 * np.log(sample[..., 5] / sample[..., 6])
+
         return newsample
 
     def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
-        """Transform to an Omega, Omega_b_HI basis."""
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
 
         newsample = sample.copy()
         newsample[..., 2] = sample[..., 2] / sample[..., 1]
+
+        # Transform back to FoGh and FoGg
+        newsample[..., 5] = np.exp(sample[..., 5] + sample[..., 6])
+        newsample[..., 6] = np.exp(sample[..., 5] - sample[..., 6])
+
         return newsample
 
     def log_transform_measure(self, theta: np.ndarray) -> float:
-        return -np.log(np.abs(theta[..., 1]))
+        """The measure for the coordinate transform."""
+
+        # The measure for the transform for Omega_b_HI
+        measure = -np.log(np.abs(theta[..., 1]))
+
+        # The log-measure for the transform for FoG+/- transform: 2 * FoGh * FoGg
+        measure = 2 * theta[..., 5] + np.log(2.0)
+
+        return measure
 
     def log_likelihood(self, theta):
         """Evaluate the log of the likelihood.
