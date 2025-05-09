@@ -1,3 +1,5 @@
+"""Routines for chi^2 tests of auto power spectrum measurements."""
+
 import logging
 import inspect
 

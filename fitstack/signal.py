@@ -426,19 +426,30 @@ class SignalTemplateFoG(SignalTemplate):
         tau = np.fft.rfftfreq(nfreq, d=df)[np.newaxis, :]
         tau2 = tau**2
 
+        if base.stack[:].ndim > 2:
+            # Dealing with the Stack3D container.
+            # Use the central pixel to determine the effective scale.
+            sel0 = (
+                slice(None),
+                np.argmin(np.abs(base.index_map["delta_ra"][:])),
+                np.argmin(np.abs(base.index_map["delta_dec"][:])),
+            )
+        else:
+            sel0 = slice(None)
+
         # FoG kernel acts in delay space, so we FFT the stacks from freq to delay
-        mu_fft_base = np.abs(np.fft.rfft(base.stack[:], nfreq, axis=-1))
-        mu_fft_deriv = np.abs(np.fft.rfft(deriv.stack[:], nfreq, axis=-1))
+        mu_fft_base = np.abs(np.fft.rfft(base.stack[sel0], nfreq, axis=-1))
+        mu_fft_deriv = np.abs(np.fft.rfft(deriv.stack[sel0], nfreq, axis=-1))
 
         # Get variance of base and deriv delay-space stacks, for usage in
         # error propagation
         var_fft_base = np.sum(
-            tools.invert_no_zero(base.attrs["num"] * base.weight[:]),
+            tools.invert_no_zero(base.attrs["num"] * base.weight[sel0]),
             axis=-1,
             keepdims=True,
         )
         var_fft_deriv = np.sum(
-            tools.invert_no_zero(deriv.attrs["num"] * deriv.weight[:]),
+            tools.invert_no_zero(deriv.attrs["num"] * deriv.weight[sel0]),
             axis=-1,
             keepdims=True,
         )
@@ -525,8 +536,11 @@ class SignalTemplateFoG(SignalTemplate):
         fslice = slice(0, nfreq)
 
         # Determine the delay axis
+        tbcast = (np.newaxis,) * (signal.ndim - 1) + (slice(None),)
+        sbcast = (slice(None),) + (np.newaxis,) * (signal.ndim - 1)
+
         df = np.abs(self.freq[1] - self.freq[0])
-        tau = np.fft.rfftfreq(fsize, d=df)[np.newaxis, :]
+        tau = np.fft.rfftfreq(fsize, d=df)[tbcast]
 
         # Calculate the fft of the signal
         fft_signal = np.fft.rfft(signal, fsize, axis=-1)
@@ -538,9 +552,6 @@ class SignalTemplateFoG(SignalTemplate):
         # Loop over parameters corresponding to distinct kernels we'll need to
         # convolve the signal by
         for name, (_, x0) in self._convolutions.items():
-
-            # Get scale corresponding to base template
-            scale0 = self._convolution_scale[name][:, np.newaxis]
 
             # Get aliased name of parameter and parameter value
             name = self._aliases.get(name, name)
