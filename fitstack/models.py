@@ -75,7 +75,10 @@ class Model(object):
         defaults = self.default_param_spec()
         self.param_spec = {}
         for name in self.param_name:
-            self.param_spec[name] = param_spec.get(name, defaults[name])
+            if name in param_spec:
+                self.param_spec[name] = param_spec[name]
+            else:
+                self.param_spec[name] = defaults[name]
 
         self.priors = {}
         for name, spec in self.param_spec.items():
@@ -175,6 +178,10 @@ class Model(object):
 
         return -0.5 * np.matmul(residual.T, np.matmul(self.inv_cov, residual))
 
+    def negative_log_likelihood(self, theta):
+        
+        return -self.log_likelihood(theta)
+
     def log_probability(self, theta):
         """Evaluate log of the probability of observing the data given the parameters.
 
@@ -214,7 +221,8 @@ class Model(object):
         """
 
         theta_all = np.copy(self.default_values)
-        theta_all[self.fit_index] = theta
+        if self.nfit > 0:
+            theta_all[self.fit_index] = theta
 
         return theta_all
 
@@ -328,7 +336,7 @@ class ScaledShiftedTemplate(Model):
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": 0.0,
+                "low": -10.0,
                 "high": 10.0,
             },
         },
@@ -337,8 +345,8 @@ class ScaledShiftedTemplate(Model):
             "value": 0.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 1.0,
+                "low": -0.8,
+                "high": 0.8,
             },
         },
     }
@@ -445,8 +453,8 @@ class Exponential(Model):
             "value": 0.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 1.0,
+                "low": -0.8,
+                "high": 0.8,
             },
         },
         "scale": {
@@ -510,7 +518,7 @@ class Exponential(Model):
 class SimulationTemplate(Model):
     """Model consisting of a linear combination of templates from simulations."""
 
-    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+    param_name = ["offset", "beam_error", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
     _param_spec = {
         "offset": {
@@ -522,13 +530,22 @@ class SimulationTemplate(Model):
                 "high": 0.8,
             },
         },
+        "beam_error": {
+            "fixed": True,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.5,
+                "high": 1.5,
+            },
+        },
         "omega": {
             "fixed": False,
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": 0.0,
-                "high": 5.0,
+                "low": -10.0,
+                "high": 10.0,
             },
         },
         "b_HI": {
@@ -537,7 +554,7 @@ class SimulationTemplate(Model):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 8.0,
+                "high": 10.0,
             },
         },
         # This is the only parameter which is reasonably constrained.
@@ -556,8 +573,8 @@ class SimulationTemplate(Model):
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 7.0,
+                "low": 0.0,
+                "high": 5.0,
             },
         },
         "FoGh": {
@@ -566,7 +583,7 @@ class SimulationTemplate(Model):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 4.0,
+                "high": 5.0,
             },
         },
         "FoGg": {
@@ -575,7 +592,7 @@ class SimulationTemplate(Model):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 4.0,
+                "high": 5.0,
             },
         },
         "M_10": {
@@ -584,7 +601,7 @@ class SimulationTemplate(Model):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 25.0,
+                "high": 20.0,
             },
         },
     }
@@ -599,6 +616,7 @@ class SimulationTemplate(Model):
         weight=None,
         combine=True,
         sort=True,
+        symmetrize=False,
         derivs=None,
         factor=1e6,
         aliases=None,
@@ -618,6 +636,7 @@ class SimulationTemplate(Model):
             weight=weight,
             combine=combine,
             sort=sort,
+            symmetrize=symmetrize,
             derivs=derivs,
             factor=factor,
             aliases=aliases,
@@ -640,8 +659,12 @@ class SimulationTemplate(Model):
         param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
         offset = param_dict.pop("offset")
+        beam_error = param_dict.pop("beam_error")
 
         model_init = self._signal_template.signal(**param_dict)[pol_sel]
+
+        if (model_init.ndim > 1) and (model_init.shape[0] > 1):
+            model_init[1] *= beam_error
 
         model = utils.shift_and_convolve(
             freq, model_init, offset=offset, kernel=transfer
@@ -653,7 +676,7 @@ class SimulationTemplate(Model):
 class SimulationTemplateFoG(SimulationTemplate):
     """Model based on templates from simulations convolved with a FoG damping kernel."""
 
-    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+    param_name = ["offset", "beam_error", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
     _param_spec = {
         "omega": {
@@ -661,8 +684,8 @@ class SimulationTemplateFoG(SimulationTemplate):
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -5.0,
-                "high": 5.0,
+                "low": -10.0,
+                "high": 10.0,
             },
         },
         "b_HI": {
@@ -670,8 +693,8 @@ class SimulationTemplateFoG(SimulationTemplate):
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -5.0,
-                "high": 5.0,
+                "low": 0.0,
+                "high": 10.0,
             },
         },
         "FoGh": {
@@ -680,7 +703,7 @@ class SimulationTemplateFoG(SimulationTemplate):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 8.0,
+                "high": 5.0,
             },
         },
         "FoGg": {
@@ -689,7 +712,7 @@ class SimulationTemplateFoG(SimulationTemplate):
             "prior": "Uniform",
             "kwargs": {
                 "low": 0.0,
-                "high": 8.0,
+                "high": 5.0,
             },
         },
     }
@@ -706,7 +729,7 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
     SimulationTemplateFoG models.
     """
 
-    param_name = ["offset", "omega", "omega_b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+    param_name = ["offset", "beam_error", "omega", "omega_b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
 
     _param_spec = {
         "omega": {
@@ -756,6 +779,193 @@ class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
         return model
 
 
+class SimulationTemplateFoGTransformDualPol(SimulationTemplateFoG):
+
+    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    def __init__(self, pol, *args, **kwargs):
+
+        self.param_base = [par for par in self.param_name]
+        defaults = self.default_param_spec()
+
+        param_name = []
+        for pstr in pol:
+            for name in self.param_name:
+                key = f"{name}_{pstr}"
+                param_name.append(key)
+                kwargs[key] = kwargs.get(name, defaults[name])
+
+        self.param_name = param_name
+        self.pol = pol
+
+        super().__init__(pol=pol, *args, **kwargs)
+
+    def model(self, theta, freq=None, transfer=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = []
+        for pp, pol in enumerate(self.pol):
+
+            param_pol = {k: param_dict[f"{k}_{pol}"] for k in self.param_base}
+
+            offset = param_pol.pop("offset")
+
+            model_init = self._signal_template.signal(**param_pol)[pp]
+
+            model.append(utils.shift_and_convolve(
+                freq, model_init, offset=offset, kernel=transfer
+            ))
+
+        return np.array(model)
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            ind_b_HI = self.param_name_fit.index(f"b_HI_{pol}")
+            newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            ind_b_HI = self.param_name_fit.index(f"b_HI_{pol}")
+            newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        meas = 0.0
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            meas -= np.log(np.abs(theta[..., ind_omega]))
+
+        return meas
+
+
+class SimulationTemplateFoGTransformSplit(SimulationTemplateFoG):
+
+    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    def __init__(self, splits, restricted=True, *args, **kwargs):
+
+        self.param_base = [par for par in self.param_name]
+        defaults = self.default_param_spec()
+
+        usplits = np.unique(splits)
+
+        if not restricted:
+            param_name = []
+            for split in usplits:
+                for name in self.param_name:
+                    key = f"{name}_{split}"
+                    param_name.append(key)
+                    kwargs[key] = kwargs.get(name, defaults[name])
+
+            self.param_name = param_name
+        
+        self.restricted = restricted
+        self.splits = np.array(splits)
+        self.index_splits = {name: np.flatnonzero(self.splits == name) for name in usplits}
+
+        print(self.param_name)
+        print(self.index_splits)
+
+        super().__init__(*args, **kwargs)
+
+    def model(self, theta, freq=None, transfer=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = np.zeros((self.splits.size, freq.size), dtype=np.float64)
+
+        for name, index in self.index_splits.items():
+
+            param_split = {}
+            for k in self.param_base:
+                lookup = f"{k}_{name}" if not self.restricted else k
+                param_split[k] = param_dict[lookup]
+
+            offset = param_split.pop("offset")
+
+            model_init = self._signal_template.signal(**param_split)
+
+            model[index] = utils.shift_and_convolve(freq, model_init, offset=offset, kernel=transfer)
+
+        return model
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        
+        if self.restricted:
+            index = [(self.param_name_fit.index(f"omega"),
+                      self.param_name_fit.index(f"b_HI"))]
+        else:
+            index = [(self.param_name_fit.index(f"omega_{sp}"),
+                      self.param_name_fit.index(f"b_HI_{sp}"))
+                      for sp in self.index_splits.keys()]
+        
+        for aa, bb in index:
+            newsample[..., bb] = sample[..., aa] * sample[..., bb]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        
+        if self.restricted:
+            index = [(self.param_name_fit.index(f"omega"),
+                      self.param_name_fit.index(f"b_HI"))]
+        else:
+            index = [(self.param_name_fit.index(f"omega_{sp}"),
+                      self.param_name_fit.index(f"b_HI_{sp}"))
+                      for sp in self.index_splits.keys()]
+        
+        for aa, bb in index:
+            newsample[..., bb] = sample[..., bb] / sample[..., aa]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        
+        if self.restricted:
+            index = [self.param_name_fit.index(f"omega")]
+        else:
+            index = [self.param_name_fit.index(f"omega_{sp}")
+                      for sp in self.index_splits.keys()]
+        
+        meas = 0.0
+        for aa in index:
+            meas -= np.log(np.abs(theta[..., aa]))
+
+        return meas
+
+
+
+
 class SimulationTemplateFoGTransform(SimulationTemplateFoG):
     """An FoG damped template that samples in a decorrelated basis.
 
@@ -767,15 +977,28 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
         """Transform to an Omega, Omega_b_HI basis."""
 
         newsample = sample.copy()
-        newsample[..., 2] = sample[..., 1] * sample[..., 2]
+
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+
+        newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
+
         return newsample
 
     def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
         """Transform to an Omega, Omega_b_HI basis."""
 
         newsample = sample.copy()
-        newsample[..., 2] = sample[..., 2] / sample[..., 1]
+
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+        
+        newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
+
         return newsample
 
     def log_transform_measure(self, theta: np.ndarray) -> float:
-        return -np.log(np.abs(theta[..., 1]))
+
+        ind_omega = self.param_name_fit.index(f"omega")
+
+        return -np.log(np.abs(theta[..., ind_omega]))

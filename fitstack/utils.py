@@ -45,6 +45,44 @@ def covariance(a, corr=False):
     return cov
 
 
+def covariance_low_mem(a, corr=False):
+    """Calculate the sample covariance over mock catalogs.
+
+    Parameters
+    ----------
+    a : np.ndarray[nmock, nfreq, ...]
+
+    corr : bool
+        Return the correlation matrix instead of the covariance matrix.
+        Default is False.
+
+    Returns
+    -------
+    cov : np.ndarray[nfreq, nfreq,  ...]
+        The sample covariance matrix (or correlation matrix).
+    """
+
+    am = a - np.mean(a, axis=0)
+    
+    nmock, nsample = am.shape
+    
+    cov = np.zeros((nsample, nsample), dtype=np.float64)
+    
+    for aa in range(nsample):
+        
+        for bb in range(nsample):
+            
+            cov[aa, bb] = np.sum(am[:, aa] * am[:, bb]) / float(nmock - 1)
+
+    if corr:
+        diag = np.diag(cov)
+        cov = cov * tools.invert_no_zero(
+            np.sqrt(diag[np.newaxis, :] * diag[:, np.newaxis])
+        )
+
+    return cov
+
+
 def unravel_covariance(cov, npol, nfreq):
     """Separate the covariance matrix into sub-arrays based on polarisation.
 
@@ -193,7 +231,7 @@ def combine_pol(stack):
     w = stack["weight"][:]
 
     ax = list(stack["stack"].attrs["axis"]).index("pol")
-    pol = list(stack.pol)
+    pol = list(stack.index_map["pol"])
 
     flag = np.zeros_like(w)
     for pstr in ["XX", "YY"]:
@@ -296,6 +334,11 @@ def average_stacks(stacks, pol=None, combine=True, sort=True):
         The stack dataset contains the mean and the weight
         dataset contains the inverse variance.
     """
+    
+    _cont_lookup = {containers.MockFrequencyStackByPol: containers.FrequencyStackByPol,
+                    containers.MockStack3D: containers.Stack3D}
+
+    OutputClass = _cont_lookup[stacks.__class__]
 
     sarr, _, spol = initialize_pol(stacks, pol=pol, combine=combine)
     nstack = sarr.shape[0]
@@ -306,8 +349,8 @@ def average_stacks(stacks, pol=None, combine=True, sort=True):
         freq = freq[isort]
         sarr = sarr[..., isort]
 
-    avg = containers.FrequencyStackByPol(
-        pol=np.array(spol), freq=freq, attrs_from=stacks
+    avg = OutputClass(
+        pol=np.array(spol), freq=freq, axes_from=stacks, attrs_from=stacks
     )
 
     avg.attrs["num"] = nstack
@@ -374,13 +417,17 @@ def load_mocks(mocks, pol=None):
     out : MockFrequencyStackByPol
         All mock catalogs in a single container.
     """
+    
+    _cont_lookup = {containers.FrequencyStackByPol: containers.MockFrequencyStackByPol,
+                    containers.MockFrequencyStackByPol: containers.MockFrequencyStackByPol,
+                    containers.Stack3D: containers.MockStack3D}
 
     if pol is None:
         pol = ["XX", "YY"]
 
     pol = np.atleast_1d(pol)
 
-    if isinstance(mocks, containers.MockFrequencyStackByPol):
+    if isinstance(mocks, (containers.MockFrequencyStackByPol, containers.MockStack3D)):
 
         if not np.array_equal(mocks.pol, pol):
             raise RuntimeError(
@@ -412,7 +459,7 @@ def load_mocks(mocks, pol=None):
 
         boundaries = np.concatenate(([0], np.cumsum(nmocks)))
 
-        out = containers.MockFrequencyStackByPol(
+        out = _cont_lookup[temp[0].__class__](
             mock=np.arange(boundaries[-1], dtype=int),
             axes_from=temp[0],
             attrs_from=temp[0],

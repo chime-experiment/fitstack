@@ -42,12 +42,13 @@ def run_mcmc(
     transfer=None,
     template=None,
     pol_fit="joint",
+    required_pol=None,
     model_name="Exponential",
     scale=1e6,
     nwalker=32,
     nsample=15000,
     max_freq=None,
-    flag_before=True,
+    flag_before=False,
     normalize_template=False,
     mean_subtract=True,
     recompute_weight=True,
@@ -85,6 +86,8 @@ def run_mcmc(
         Polarisation to fit.  Here "I" refers to the weighted sum of the
          "XX" and "YY" polarisations and "joint" refers to a simultaneous
         fit to the "XX" and "YY" polarisations.
+    required_pol : list
+        Polarisations to load from file.  If None, defaults to ["XX", "YY"].
     model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
                   "SimulationTemplate"|"SimulationTemplateFoG"|
                   "SimulationTemplateFoGAltParam"}
@@ -139,8 +142,10 @@ def run_mcmc(
         precision matrix inferred from the mocks.
     """
 
-    required_pol = ["XX", "YY"]
-    combine_pol = True
+    if required_pol is None:
+        required_pol = ["XX", "YY"]
+
+    combine_pol = True if ("DualPol" not in model_name) and ("Split" not in model_name) else False
 
     if param_spec is None:
         param_spec = {}
@@ -181,10 +186,11 @@ def run_mcmc(
 
     # For the simulation template we need to provide parameters to average the polarisations
     if model_name in SIMULATION_MODELS:
-        model_kwargs["weight"] = inv_var if recompute_weight else data.weight[:]
-        model_kwargs["pol"] = required_pol
+        model_kwargs["pol"] = ["XX", "YY"]
         model_kwargs["combine"] = combine_pol
         model_kwargs["sort"] = True
+        if "Split" not in model_name:
+            model_kwargs["weight"] = inv_var if recompute_weight else data.weight[:]
 
     # Determine the frequencies to fit
     freq = data.freq[:]
@@ -199,7 +205,6 @@ def run_mcmc(
         freq_flag = np.ones(nfreq, dtype=bool)
 
     freq_index = np.flatnonzero(freq_flag)
-    freq_slice = slice(freq_index[0], freq_index[-1] + 1)
 
     # Initialize all arrays
     data_stack, weight_stack, pol = utils.initialize_pol(
@@ -229,7 +234,7 @@ def run_mcmc(
 
         if normalize_template:
             max_template = np.max(
-                template_stack[..., freq_slice], axis=-1, keepdims=True
+                template_stack[..., freq_index], axis=-1, keepdims=True
             )
             template_stack = template_stack / max_template
 
@@ -249,23 +254,28 @@ def run_mcmc(
 
     # Calculate the covariance over mocks
     cov_flat = utils.covariance(mock_stack.reshape(nmock, -1), corr=False)
-
     cov = utils.unravel_covariance(cov_flat, npol, nfreq)
 
     # Determine the polarisation to fit
-    if pol_fit in ["XX", "YY", "I"]:
-        ipol = pol.index(pol_fit)
+    if pol_fit == "I":
+        ipol_fit = pol.index(pol_fit)
         npol_fit = 1
 
-        C = cov[ipol, ipol]
-        ifit = freq_slice
+        C = cov[ipol_fit, ipol_fit]
+        ifit = freq_index
 
-    elif pol_fit == "joint":
-        ipol = np.array([pol.index(pstr) for pstr in ["XX", "YY"]])
-        npol_fit = len(ipol)
+    elif pol_fit in ["XX", "YY", "joint"]:
 
-        C = utils.ravel_covariance(cov[ipol][:, ipol])
-        ifit = np.concatenate(tuple([p * nfreq + freq_index for p in range(npol_fit)]))
+        ipol_fit = np.array([pol.index(pstr) for pstr in required_pol])
+        npol_fit = len(ipol_fit)
+
+        C = utils.ravel_covariance(cov[ipol_fit][:, ipol_fit])
+
+        if pol_fit == "joint":
+            ifit = np.concatenate(tuple([p * nfreq + freq_index for p in range(npol_fit)]))
+        else:
+            p = [pol[ip] for ip in ipol_fit].index(pol_fit)
+            ifit = p * nfreq + freq_index
 
     else:
         raise ValueError(
@@ -275,7 +285,7 @@ def run_mcmc(
 
     pol = np.array(pol)
     x = np.zeros(nfreq * npol_fit, dtype=[("pol", "U8"), ("freq", np.float64)])
-    for p, pstr in enumerate(np.atleast_1d(pol[ipol])):
+    for p, pstr in enumerate(np.atleast_1d(pol[ipol_fit])):
         slc = slice(p * nfreq, (p + 1) * nfreq)
         x["pol"][slc] = pstr
         x["freq"][slc] = freq
@@ -333,24 +343,24 @@ def run_mcmc(
     results["flag"][:] = np.diag(Cinv) > 0.0
 
     # Set the data for this polarisation
-    y = data_stack[ipol]
+    y = data_stack[ipol_fit]
 
     fit_kwargs = {"freq": freq, "data": y, "inv_cov": Cinv}
     eval_kwargs = {"freq": freq}
 
     if transfer is not None:
-        fit_kwargs["transfer"] = transfer_stack[ipol]
+        fit_kwargs["transfer"] = transfer_stack[ipol_fit]
         eval_kwargs["transfer"] = transfer_stack[:]
     else:
         fit_kwargs["transfer"] = None
         eval_kwargs["transfer"] = None
 
     if template is not None:
-        fit_kwargs["template"] = template_stack[ipol]
+        fit_kwargs["template"] = template_stack[ipol_fit]
         eval_kwargs["template"] = template_stack[:]
 
-    if model_name in SIMULATION_MODELS:
-        fit_kwargs["pol_sel"] = ipol
+    if model_name in SIMULATION_MODELS and ("DualPol" not in model_name) and ("Split" not in model_name):
+        fit_kwargs["pol_sel"] = ipol_fit
         eval_kwargs["pol_sel"] = slice(None)
 
     model.set_data(**fit_kwargs)
@@ -363,7 +373,7 @@ def run_mcmc(
     # Create the sampler and run the MCMC
     sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability_sampler)
 
-    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=False)
+    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=True)
 
     chain = model.backward_transform_sampler(sampler.get_chain())
 
@@ -443,6 +453,7 @@ class RunMCMC(task.SingleTask):
     template = config.Property(proptype=_list_or_glob)
 
     pol_fit = config.Property(proptype=str)
+    required_pol = config.Property(proptype=list)
     model_name = config.Property(proptype=str)
     scale = config.Property(proptype=float)
 

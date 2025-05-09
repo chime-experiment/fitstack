@@ -58,7 +58,7 @@ class SignalTemplate:
         weight: np.ndarray = None,
         combine: bool = True,
         sort: bool = True,
-        symmetrize: bool = True,
+        symmetrize: bool = False,
         **kwargs,
     ):
         """Load the signal template from a set of stack files.
@@ -128,6 +128,7 @@ class SignalTemplate:
 
             # TODO: this presumes that 0 is the central element
             if symmetrize:
+                logger.info("Symmetrizing the templates.")
                 stacks[key].stack[:] = 0.5 * (
                     stacks[key].stack[:] + stacks[key].stack[..., ::-1]
                 )
@@ -389,17 +390,26 @@ class SignalTemplateFoG(SignalTemplate):
         df = np.abs(self.freq[1] - self.freq[0])
         tau = np.fft.rfftfreq(nfreq, d=df)[np.newaxis, :]
         tau2 = tau ** 2
-
-        mu_fft_base = np.abs(np.fft.rfft(base.stack[:], nfreq, axis=-1))
-        mu_fft_deriv = np.abs(np.fft.rfft(deriv.stack[:], nfreq, axis=-1))
+        
+        if base.stack[:].ndim > 2:
+            # Dealing with the Stack3D container.
+            # Use the central pixel to determine the effective scale.
+            sel0 = (slice(None),
+                    np.argmin(np.abs(base.index_map['delta_ra'][:])),
+                    np.argmin(np.abs(base.index_map['delta_dec'][:])))
+        else:
+            sel0 = slice(None)
+            
+        mu_fft_base = np.abs(np.fft.rfft(base.stack[sel0], nfreq, axis=-1))
+        mu_fft_deriv = np.abs(np.fft.rfft(deriv.stack[sel0], nfreq, axis=-1))
 
         var_fft_base = np.sum(
-            tools.invert_no_zero(base.attrs["num"] * base.weight[:]),
+            tools.invert_no_zero(base.attrs["num"] * base.weight[sel0]),
             axis=-1,
             keepdims=True,
         )
         var_fft_deriv = np.sum(
-            tools.invert_no_zero(deriv.attrs["num"] * deriv.weight[:]),
+            tools.invert_no_zero(deriv.attrs["num"] * deriv.weight[sel0]),
             axis=-1,
             keepdims=True,
         )
@@ -469,8 +479,11 @@ class SignalTemplateFoG(SignalTemplate):
         fslice = slice(0, nfreq)
 
         # Determine the delay axis
+        tbcast = (np.newaxis,) * (signal.ndim - 1) + (slice(None),)
+        sbcast = (slice(None),) + (np.newaxis,) * (signal.ndim - 1)
+        
         df = np.abs(self.freq[1] - self.freq[0])
-        tau = np.fft.rfftfreq(fsize, d=df)[np.newaxis, :]
+        tau = np.fft.rfftfreq(fsize, d=df)[tbcast]
 
         # Calculate the fft of the signal
         fft_signal = np.fft.rfft(signal, fsize, axis=-1)
@@ -481,7 +494,7 @@ class SignalTemplateFoG(SignalTemplate):
 
         for name, (_, x0) in self._convolutions.items():
 
-            scale0 = self._convolution_scale[name][:, np.newaxis]
+            scale0 = self._convolution_scale[name][sbcast]
 
             name = self._aliases.get(name, name)
             if name not in kwargs:

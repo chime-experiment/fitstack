@@ -5,6 +5,30 @@ import numpy as np
 from draco.core.containers import *
 
 
+class MockStack3D(MockFrequencyStackByPol, Stack3D):
+    """Container for holding a frequency stack split by pol for multiple mock catalogs.
+
+    Adds a `mock` axis as the first dimension of each dataset.
+    """
+
+    _axes = ("mock",)
+
+    _dataset_spec = {
+        "stack": {
+            "axes": ["mock", "pol", "delta_ra", "delta_dec", "freq"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "weight": {
+            "axes": ["mock", "pol", "delta_ra", "delta_dec", "freq"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
+
+
 class StackSet1D(FrequencyStackByPol):
     """Container for all data required to perform a model fit to a 1D stack."""
 
@@ -54,6 +78,50 @@ class StackSet3D(Stack3D):
             "axes": ["pol", "delta_ra", "delta_dec", "freq"],
             "dtype": np.float64,
             "initialise": False,
+            "distributed": False,
+        },
+    }
+
+
+class ChisqTest(ContainerBase):
+
+    _axes = ("mock", "restricted_param", "unrestricted_param")
+
+    _dataset_spec = {
+        "restricted_success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "restricted_chisq": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "restricted_param": {
+            "axes": ["mock", "restricted_param"],
+            "dtype": np.float64,
+            "initialise": False,
+            "distributed": False,
+        },
+        "unrestricted_success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "unrestricted_chisq": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "unrestricted_param": {
+            "axes": ["mock", "unrestricted_param"],
+            "dtype": np.float64,
+            "initialise": True,
             "distributed": False,
         },
     }
