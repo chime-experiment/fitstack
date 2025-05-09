@@ -69,6 +69,7 @@ def initialize_mcmc_ingredients(
     transfer=None,
     template=None,
     pol_fit="joint",
+    required_pol=None,
     pol_stokes=False,
     model_name="Exponential",
     scale=1e6,
@@ -77,7 +78,7 @@ def initialize_mcmc_ingredients(
     max_freq=None,
     min_k=None,
     max_k=None,
-    flag_before=True,
+    flag_before=False,
     normalize_template=False,
     mean_subtract=True,
     recompute_weight=True,
@@ -133,11 +134,17 @@ def initialize_mcmc_ingredients(
             polname = _PS_POLNAME
 
     if pol_stokes:
-        required_pol = [polname["I"], polname["Q"]]
+        if required_pol is None:
+            required_pol = [polname["I"], polname["Q"]]
         combine_pol = False
     else:
-        required_pol = [polname["XX"], polname["YY"]]
-        combine_pol = True
+        if required_pol is None:
+            required_pol = [polname["XX"], polname["YY"]]
+        combine_pol = (
+            True
+            if ("DualPol" not in model_name) and ("Split" not in model_name)
+            else False
+        )
 
     if param_spec is None:
         param_spec = {}
@@ -212,7 +219,10 @@ def initialize_mcmc_ingredients(
     # For the simulation template, we need to provide parameters to average the polarisations
     if model_name in SIMULATION_MODELS:
         if dset == "stack":
-            model_kwargs["weight"] = _re(data.weight[:])
+            if "Split" not in model_name:
+                model_kwargs["weight"] = (
+                    inv_var if recompute_weight else _re(data.weight[:])
+                )
         else:
             if ps2d_model:
                 # If our power spectrum model starts from 2d, take weights and signal_mask
@@ -460,7 +470,11 @@ def initialize_mcmc_ingredients(
         fit_kwargs["template"] = template_meas[ipol]
         eval_kwargs["template"] = template_meas[:]
 
-    if model_name in SIMULATION_MODELS:
+    if (
+        model_name in SIMULATION_MODELS
+        and ("DualPol" not in model_name)
+        and ("Split" not in model_name)
+    ):
         fit_kwargs["pol_sel"] = ipol
         eval_kwargs["pol_sel"] = slice(None)
 
@@ -485,6 +499,7 @@ def run_mcmc(
     transfer=None,
     template=None,
     pol_fit="joint",
+    required_pol=None,
     pol_stokes=False,
     model_name="Exponential",
     scale=1e6,
@@ -493,7 +508,7 @@ def run_mcmc(
     max_freq=None,
     min_k=None,
     max_k=None,
-    flag_before=True,
+    flag_before=False,
     normalize_template=False,
     mean_subtract=True,
     recompute_weight=True,
@@ -544,6 +559,10 @@ def run_mcmc(
         unweighted sum of "XX" and "YY" for power spectrum measurements.
         "joint" refers to a simultaneous fit to the "XX" and "YY" or "I"
         and "Q" polarisations.
+    required_pol : list
+        Polarizations to load from file.  If None, defaults to ["XX", "YY"]
+        for stacking measurements and ["I-I", "Q-Q] for power spectrum
+        measuerements.
     pol_stokes : bool
         If True, assume that all input files contain Stokes parameters
         instead of instrumental polarisations. Default: False.
@@ -572,7 +591,7 @@ def run_mcmc(
     flag_before : bool
         Only relevant if max_freq, min_k, or max_k is not None.
         The frequency offset flag will be applied prior to calculating the
-        inverse of the covariance matrix. Default is True.
+        inverse of the covariance matrix. Default is False.
     normalize_template : bool
         Divide the template by its maximum value prior to fitting.
         Default is False.
@@ -660,7 +679,7 @@ def run_mcmc(
     # Create the sampler and run the MCMC
     sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability_sampler)
 
-    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=False)
+    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=True)
 
     chain = model.backward_transform_sampler(sampler.get_chain())
 
@@ -746,6 +765,7 @@ class RunMCMC(task.SingleTask):
     template = config.Property(proptype=_list_or_glob)
 
     pol_fit = config.Property(proptype=str)
+    required_pol = config.Property(proptype=list)
     pol_stokes = config.Property(proptype=bool)
     model_name = config.Property(proptype=str)
     scale = config.Property(proptype=float)

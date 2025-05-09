@@ -49,6 +49,44 @@ def covariance(a, corr=False):
     return cov
 
 
+def covariance_low_mem(a, corr=False):
+    """Calculate the sample covariance over mock catalogs.
+
+    Parameters
+    ----------
+    a : np.ndarray[nmock, nfreq, ...]
+
+    corr : bool
+        Return the correlation matrix instead of the covariance matrix.
+        Default is False.
+
+    Returns
+    -------
+    cov : np.ndarray[nfreq, nfreq,  ...]
+        The sample covariance matrix (or correlation matrix).
+    """
+
+    am = a - np.mean(a, axis=0)
+
+    nmock, nsample = am.shape
+
+    cov = np.zeros((nsample, nsample), dtype=np.float64)
+
+    for aa in range(nsample):
+
+        for bb in range(nsample):
+
+            cov[aa, bb] = np.sum(am[:, aa] * am[:, bb]) / float(nmock - 1)
+
+    if corr:
+        diag = np.diag(cov)
+        cov = cov * tools.invert_no_zero(
+            np.sqrt(diag[np.newaxis, :] * diag[:, np.newaxis])
+        )
+
+    return cov
+
+
 def unravel_covariance(cov, npol, nx):
     """Separate the covariance matrix into sub-arrays based on polarisation.
 
@@ -623,10 +661,10 @@ def load_mocks(mocks, pol=None):
     ----------
     mocks : list of str; container; list of containers; or glob
         Set of stacks on mock catalogs or noise power spectra.
-        This can either be a MockFrequencyStackByPol,
+        This can either be a MockFrequencyStackByPol, MockStack3D,
         MockPowerSpectrum1D, or MockPowerSpectrum2D container; a list of
-        FrequencyStackByPol, PowerSpectrum1D, or PowerSpectrum2D containers;
-        or a filename or list of filenames that
+        FrequencyStackByPol, Stack3D, PowerSpectrum1D, or PowerSpectrum2D
+        containers; or a filename or list of filenames that
         hold these types of containers and will be loaded from disk.
     pol : list of str
         Desired polarisations.  Defaults to ["XX", "YY"] for stacks or
@@ -637,11 +675,11 @@ def load_mocks(mocks, pol=None):
     out : MockFrequencyStackByPol, MockPowerSpectrum1D, or MockPowerSpectrum2D
         All mock catalogs or power spectra in a single container.
     """
-
     if isinstance(
         mocks,
         (
             containers.MockFrequencyStackByPol,
+            containers.MockStack3D,
             containers.MockPowerSpectrum1D,
             containers.MockPowerSpectrum2D,
         ),
@@ -670,14 +708,19 @@ def load_mocks(mocks, pol=None):
             if pol is None:
                 with h5py.File(mocks[0], "r") as handler:
                     container_type = handler.attrs["__memh5_subclass"]
-                    if container_type == "draco.core.containers.FrequencyStackByPol":
+                    if container_type in [
+                        "draco.core.containers.FrequencyStackByPol",
+                        "draco.core.containers.Stack3D",
+                    ]:
                         pol = ["XX", "YY"]
                     else:
                         pol = ["XX-XX", "YY-YY"]
 
         else:
             if pol is None:
-                if isinstance(mocks[0], containers.MockFrequencyStackByPol):
+                if isinstance(
+                    mocks[0], (containers.MockFrequencyStackByPol, containers.Stack3D)
+                ):
                     pol = ["XX", "YY"]
                 else:
                     pol = ["XX-XX", "YY-YY"]
@@ -705,6 +748,12 @@ def load_mocks(mocks, pol=None):
 
         if isinstance(temp[0], containers.FrequencyStackByPol):
             out = containers.MockFrequencyStackByPol(
+                mock=np.arange(boundaries[-1], dtype=int),
+                axes_from=temp[0],
+                attrs_from=temp[0],
+            )
+        elif isinstance(temp[0], containers.Stack3D):
+            out = containers.MockStack3D(
                 mock=np.arange(boundaries[-1], dtype=int),
                 axes_from=temp[0],
                 attrs_from=temp[0],
