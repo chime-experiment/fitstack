@@ -424,7 +424,16 @@ def average_data(cnt, pol=None, combine=True, sort=True):
             distributed=False,
         )
         avg.ps2D[:] = np.mean(darr, axis=0)
-        avg.ps2D_weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
+        #avg.ps2D_weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
+
+        if darr.shape[0] == 1:
+            # Set weights to unity for single mock
+            avg.ps2D_weight[:] = np.ones_like(avg.ps2D[:])
+        else:
+            # variance calculation for multiple mocks
+            avg.ps2D_weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
+
+
     else:
         avg = containers.Powerspec1D(
             pol=np.array(dpol), k=cnt.index_map["k"], attrs_from=cnt, distributed=False
