@@ -12,7 +12,8 @@ from draco.core.containers import FrequencyStackByPol, Powerspec1D, Powerspec2D
 from draco.analysis.powerspec import get_1d_ps
 
 from . import utils
-
+from cora.util import cosmology
+from cora.util import units as u
 logger = logging.getLogger(__name__)
 
 
@@ -969,9 +970,19 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         convolutions: Optional[Dict[str, Tuple[float, float]]] = None,
         kpar_range: Optional[Tuple[float, float]] = None,
+        nu21: float = 1420.40575177,  # MHz
+        z_eff: Optional[float] = None,  # effective redshift
+        cs: float = 299792.458,  # speed of light in km/s          
         *args,
         **kwargs,
     ):
+        
+        # Set default z_eff if None
+        self.z_eff = z_eff if z_eff is not None else 1.0
+        cosmo_cora = cosmology.Cosmology()
+        self.H_z = cosmo_cora.H(self.z_eff) * u.mega_parsec / 1000.  # In km/s/Mpc
+        self.nu21 = nu21 
+        self.cs = cs           
 
         if derivs is None:
             derivs = {
@@ -1098,6 +1109,22 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             scale = self._solve_scale(base, ps2Ds[key], alpha)
             self._convolution_scale[name] = scale
 
+
+    def _get_factor(self) -> float:
+        """Calculate the conversion factor connecting tau and k_parallel.
+        
+        C = -1/(2 pi nu21) * c/H(z) * (1+z)²
+        
+        Returns
+        -------
+        C : float
+            Conversion factor
+        """
+
+        C = (-1.0 / (2 * np.pi * self.nu21)) * (self.cs / self.H_z) * (1 + self.z_eff)**2
+
+        return C            
+
     def multiply_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
         """Multiply the 2d power spectrum with the relative FoG kernel.
 
@@ -1113,7 +1140,9 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         signal : np.ndarray[npol, nkpar, nkperp]
             The 2d power spectrum after multiplication with the relative FoG kernel.
         """
-
+        # Calculate the conversion factor
+        C = self._get_factor()
+        
         # Loop over parameters corresponding to distinct kernels we'll need to
         # multiply into the signal
         for name, (_, x0) in self._convolutions.items():
@@ -1132,8 +1161,8 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             scale = alpha * scale0
 
             # Multiply kernel into signal
-            signal *= (1.0 + (scale0 * self.kpar[np.newaxis, :, np.newaxis]) ** 2) / (
-                1.0 + (scale * self.kpar[np.newaxis, :, np.newaxis]) ** 2
+            signal *= (1.0 + (scale0 * C * self.kpar[np.newaxis, :, np.newaxis]) ** 2) / (
+                1.0 + (scale * C * self.kpar[np.newaxis, :, np.newaxis]) ** 2
             )
 
         return signal
