@@ -563,6 +563,7 @@ class RunMCMC(task.SingleTask):
     """
 
     max_iter = config.Property(proptype=int, default=1)
+    data_2d = config.Property(proptype=str, default=None)
 
     data = config.Property(proptype=str)
     mocks = config.Property(proptype=_list_or_glob)
