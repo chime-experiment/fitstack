@@ -648,13 +648,25 @@ class AutoSignalTemplate2D:
 
         # Find directories which match the right format
         for d in sorted(dirs):
-            mo = re.search(r"_compderiv-([^\/]+)", d)
+            ###mo = re.search(r"_compderiv-([^\/]+)", d)
+            mo_comp = re.search(r"template_bias_([0-9\.]+)_Pk_([^_]+)_ps_HI", d)
+            # Check for shotnoise directory
+            mo_shotnoise = re.search(r"template_shotnoise", d)
 
-            if mo is None:
+            if mo_comp:
+                bias = mo_comp.group(1)  # This will be "0", "0.5", or "1"
+                pk_type = mo_comp.group(2)  # This will be "base", "lin", "FoGh"
+                # Create a composite key that identifies the templates
+                key = f"{bias}-{pk_type}"
+
+            elif mo_shotnoise:
+                key = "shotnoise"
+            else:
                 print(f"Directory {d} does not match expected format, rejecting")
                 continue
 
-            key = mo.group(1)
+            print(f"Processing directory: {d}")
+
 
             if key in matching:
                 raise ValueError(
@@ -711,7 +723,7 @@ class AutoSignalTemplate2D:
         # Generate the required templates from the 2d power spectra
 
         # Find all entries that have the linear component structure
-        compterms = [k.split("-")[1] for k in ps2Ds.keys() if k.startswith("0")]
+        compterms = [k.split("-")[1] for k in ps2Ds.keys() if k.startswith("0-")]
 
         ps2D_modes = {}
 
@@ -751,7 +763,7 @@ class AutoSignalTemplate2D:
             logger.debug(f"Combining mode {term}")
 
             s0, v0 = _check_load_ps2D(f"0-{term}")
-            sh, vh = _check_load_ps2D(f"h-{term}")
+            sh, vh = _check_load_ps2D(f"0.5-{term}")
             s1, v1 = _check_load_ps2D(f"1-{term}")
 
             # Initialize arrays for b_HI = 0, 1/2, 1
