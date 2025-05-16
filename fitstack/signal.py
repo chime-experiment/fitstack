@@ -581,7 +581,7 @@ class AutoSignalTemplate2D:
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         factor: float = 1.0,
         aliases: Optional[Dict[str, str]] = None,
-        nbins: int = 10,
+        nbins: int = 7,
         logbins: bool = True,
     ):
 
