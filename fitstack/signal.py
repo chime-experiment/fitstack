@@ -969,9 +969,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         convolutions: Optional[Dict[str, Tuple[float, float]]] = None,
         kpar_range: Optional[Tuple[float, float]] = None,
-        nu21: float = 1420.40575177,  # MHz
-        z_eff: Optional[float] = None,  # effective redshift
-        cs: float = 299792.458,  # speed of light in km/s          
+        z_eff: Optional[float] = None,  # effective redshift      
         *args,
         **kwargs,
     ):
@@ -979,9 +977,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         # Set default z_eff if None
         self.z_eff = z_eff if z_eff is not None else 1.0
         cosmo_cora = cosmology.Cosmology()
-        self.H_z = cosmo_cora.H(self.z_eff) * u.mega_parsec / 1000.  # In km/s/Mpc
-        self.nu21 = nu21 
-        self.cs = cs           
+        self.H_z = cosmo_cora.H(self.z_eff) * u.mega_parsec / 1000.  # In km/s/Mpc 
 
         if derivs is None:
             derivs = {
@@ -1120,7 +1116,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             Conversion factor
         """
 
-        C = (-1.0 / (2 * np.pi * self.nu21)) * (self.cs / self.H_z) * (1 + self.z_eff)**2
+        C = (-1.0 / (2 * np.pi * u.nu21)) * ((u.c / u.kilo) / self.H_z) * (1 + self.z_eff)**2
 
         return C            
 
