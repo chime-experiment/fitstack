@@ -666,8 +666,7 @@ class AutoSignalTemplate2D:
                 print(f"Directory {d} does not match expected format, rejecting")
                 continue
 
-            print(f"Processing directory: {d}")
-
+            logger.debug(f"Processing directory: {d}")
 
             if key in matching:
                 raise ValueError(
