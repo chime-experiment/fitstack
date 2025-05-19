@@ -424,7 +424,6 @@ def average_data(cnt, pol=None, combine=True, sort=True):
             distributed=False,
         )
         avg.ps2D[:] = np.mean(darr, axis=0)
-        #avg.ps2D_weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
