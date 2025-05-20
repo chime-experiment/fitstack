@@ -5,6 +5,7 @@ import inspect
 
 import numpy as np
 import emcee
+import h5py
 
 from caput import config, pipeline
 
@@ -86,7 +87,7 @@ def run_mcmc(
         Measurements of 2d power spectrum, either as a PowerSpectrum2D 
         container or filename. When fitting to 1d power spectrum 
         measurements with a model that starts in 2d, weights and 
-        (kpar,kperp) masking will be taken from here. Ignored if not 
+        (kpara,kperp) masking will be taken from here. Ignored if not 
         needed.
     transfer : FrequencyStackByPol or str
         The transfer function of the pipeline (only implemented for stacking).
@@ -168,7 +169,32 @@ def run_mcmc(
         precision matrix inferred from the mocks.
     """
 
-    required_pol = ["XX", "YY"]
+    # Co-pols are stored as XX, YY for stacking and XX-XX, YY-YY
+    # for power spectra. Internally, we always use XX, YY, but we
+    # need to map these to the relevant strings depending on the input
+    # data.
+    if isinstance(data, str):
+        with h5py.File(utils.find_file(data), "r") as handler:
+            container_type = handler.attrs["__memh5_subclass"]
+            if container_type == "draco.core.containers.FrequencyStackByPol":
+                polname = {"XX": "XX", "YY": "YY", "I": "I"}
+            elif container_type in [
+                "draco.core.containers.PowerSpectrum2D", "draco.core.containers.PowerSpectrum1D"
+            ]:
+                polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I"}
+            else:
+                raise RuntimeError(
+                    f"Container type of data argument ({container_type})"
+                    " not recognized"
+                )
+    else:
+        if isinstance(data, containers.FrequencyStackByPol):
+            polname = {"XX": "XX", "YY": "YY", "I": "I"}
+        else:
+            polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I"}
+
+
+    required_pol = [polname["XX"], polname["YY"]]
     combine_pol = True
 
     if param_spec is None:
@@ -349,14 +375,14 @@ def run_mcmc(
 
     # Determine the polarisation to fit
     if pol_fit in ["XX", "YY", "I"]:
-        ipol = pol.index(pol_fit)
+        ipol = pol.index(polname[pol_fit])
         npol_fit = 1
 
         C = cov[ipol, ipol]
         ifit = x_1d_index
 
     elif pol_fit == "joint":
-        ipol = np.array([pol.index(pstr) for pstr in ["XX", "YY"]])
+        ipol = np.array([pol.index(pstr) for pstr in [polname["XX"], polname["YY"]]])
         npol_fit = len(ipol)
 
         C = utils.ravel_covariance(cov[ipol][:, ipol])
@@ -412,6 +438,7 @@ def run_mcmc(
             step=nsample,
             param=np.array(model.param_name),
             percentile=np.array(PERCENTILE),
+            cosmology=data.cosmology,
         )
         results["var"][:] = tools.invert_no_zero(weight_meas)
         results["k_flag"][:] = x_1d_flag

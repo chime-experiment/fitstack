@@ -200,20 +200,26 @@ def combine_pol(cnt):
 
     if isinstance(cnt, containers.FrequencyStackByPol):
         data_type = "stack"
-    elif isinstance(cnt, containers.PowerSpectrum2D):
-        data_type = "ps2D"
+        copol_names = ["XX", "YY"]
+        is_mock_cont = isinstance(cnt, containers.MockFrequencyStackByPol)
     else:
-        data_type = "ps1D"
+        copol_names = ["XX-XX", "YY-YY"]
+        if isinstance(cnt, containers.PowerSpectrum2D):
+            data_type = "ps2D"
+            is_mock_cont = isinstance(cnt, containers.MockPowerSpectrum2D)
+        else:
+            data_type = "ps1D"
+            is_mock_cont = isinstance(cnt, containers.MockPowerSpectrum1D)
 
-    pol = list(cnt.pol)
+    pol = list(cnt.index_map["pol"])
 
     # If operating on power spectra, check that ordering of k-bin centers is
     # identical for the two polarizations. (Otherwise, we shouldn't combine them.)
     if data_type == "ps1D":
         isort = np.argsort(cnt.k1D)
         ax = list(cnt.k1D.attrs["axis"]).index("pol")
-        slc_XX = (slice(None),) * ax + (pol.index("XX"),)
-        slc_YY = (slice(None),) * ax + (pol.index("YY"),)
+        slc_XX = (slice(None),) * ax + (pol.index("XX-XX"),)
+        slc_YY = (slice(None),) * ax + (pol.index("YY-YY"),)
         if not np.allclose(isort[slc_XX], isort[slc_YY]):
             raise RuntimeError(
                 "Power spectrum k bins have different ordering "
@@ -230,7 +236,7 @@ def combine_pol(cnt):
     ax = list(cnt[_dset_name[data_type]].attrs["axis"]).index("pol")
 
     flag = np.zeros_like(w)
-    for pstr in ["XX", "YY"]:
+    for pstr in copol_names:
         pp = pol.index(pstr)
         slc = (slice(None),) * ax + (pp,)
         flag[slc] = 1.0
@@ -249,7 +255,18 @@ def combine_pol(cnt):
         x = {"kpara": cnt.kpara, "kperp": cnt.kperp}
     else:
         x = cnt.k1D[:]
-        x = np.sum(w * x, axis=ax) * tools.invert_no_zero(wz)
+        if is_mock_cont:
+            # Check that weights are identical for each mock
+            if not np.allclose(w, w[0]):
+                raise RuntimeError(
+                    "Weights in MockPowerSpectrum1D are different for each mock."
+                    "The current code implementation cannot handle this."
+                )
+            # Just use weights for first mock, modifying ax to account for
+            # fact that we've selected a single element of the mock axis
+            x = np.sum(w[0] * x, axis=ax-1) * tools.invert_no_zero(wz[0])
+        else:
+            x = np.sum(w * x, axis=ax) * tools.invert_no_zero(wz)
 
     return z, wz, x
 
@@ -263,7 +280,8 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
         Container with stack or power spectrum.
     pol : list of str
         The polarisations to select.  If not provided,
-        then ["XX", "YY"] is assumed.
+        then ["XX", "YY"] is assumed for stack or ["XX-XX", "YY-YY"]
+        is assumed for power spectrum.
     combine : bool
         Add an element to the polarisation axis that is
         the weighted sum of XX and YY.
@@ -298,15 +316,18 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
 
     if isinstance(cnt, containers.FrequencyStackByPol):
         data_type = "stack"
-    elif isinstance(cnt, containers.PowerSpectrum2D):
-        data_type = "ps2D"
+        if pol is None:
+            pol = ["XX", "YY"]
     else:
-        data_type = "ps1D"
+        if pol is None:
+            pol = ["XX-XX", "YY-YY"]
 
-    if pol is None:
-        pol = ["XX", "YY"]
+        if isinstance(cnt, containers.PowerSpectrum2D):
+            data_type = "ps2D"
+        else:
+            data_type = "ps1D"
 
-    cpol = list(cnt.pol)
+    cpol = list(cnt.index_map["pol"])
     ipol = np.array([cpol.index(pstr) for pstr in pol])
 
     num_cpol = ipol.size
@@ -385,7 +406,8 @@ def average_data(cnt, pol=None, combine=True, sort=True):
         Container with stacks or power spectra to average.
     pol : list of str
         The polarisations to select.  If not provided,
-        then ["XX", "YY"] is assumed.
+        then ["XX", "YY"] is assumed for stacks or ["XX-XX", "YY-YY"]
+        is assumed for power spectra.
     combine : bool
         Add an element to the polarisation axis that is
         the weighted sum of XX and YY.  Default is True.
@@ -463,7 +485,8 @@ def load_pol(filename, pol=None):
     filename : str
         Name of the file.
     pol : list of str
-        Desired polarisations.  Defaults to ["XX", "YY"].
+        Desired polarisations.  Defaults to ["XX", "YY"] for stack
+        or ["XX-XX", "YY-YY"] for power spectrum.
 
     Returns
     -------
@@ -472,14 +495,30 @@ def load_pol(filename, pol=None):
         the requested polarisations.
     """
 
-    if pol is None:
-        pol = ["XX", "YY"]
-
-    pol = np.atleast_1d(pol)
-
     with h5py.File(filename, "r") as handler:
         container_path = handler.attrs["__memh5_subclass"]
         fpol = list(handler["index_map"]["pol"][:].astype(str))
+
+    if container_path in [
+        "draco.core.containers.FrequencyStackByPol",
+        "draco.core.containers.MockFrequencyStackByPol",
+    ]:
+        if pol is None:
+            pol = ["XX", "YY"]
+    elif container_path in [
+        "draco.core.containers.PowerSpectrum2D", 
+        "draco.core.containers.MockPowerSpectrum2D", 
+        "draco.core.containers.PowerSpectrum1D",
+        "draco.core.containers.MockPowerSpectrum1D",
+    ]:
+        if pol is None:
+            pol = ["XX-XX", "YY-YY"]
+    else:
+        raise RuntimeError(
+            f"Container type of file ({container_path}) not recognized"
+        )
+
+    pol = np.atleast_1d(pol)
 
     ipol = np.array([fpol.index(pstr) for pstr in pol])
 
@@ -501,18 +540,14 @@ def load_mocks(mocks, pol=None):
         or a filename or list of filenames that
         hold these types of containers and will be loaded from disk.
     pol : list of str
-        Desired polarisations.  Defaults to ["XX", "YY"].
+        Desired polarisations.  Defaults to ["XX", "YY"] for stacks or
+        ["XX-XX", "YY-YY"] for power spectra.
 
     Returns
     -------
     out : MockFrequencyStackByPol, MockPowerSpectrum1D, or MockPowerSpectrum2D
         All mock catalogs or power spectra in a single container.
     """
-
-    if pol is None:
-        pol = ["XX", "YY"]
-
-    pol = np.atleast_1d(pol)
 
     if isinstance(
         mocks,
@@ -522,6 +557,13 @@ def load_mocks(mocks, pol=None):
             containers.MockPowerSpectrum2D,
         ),
     ):
+        if pol is None:
+            if isinstance(mocks, containers.MockFrequencyStackByPol):
+                pol = ["XX", "YY"]
+            else:
+                pol = ["XX-XX", "YY-YY"]
+
+        pol = np.atleast_1d(pol)
 
         if not np.array_equal(mocks.pol, pol):
             raise RuntimeError(
@@ -535,6 +577,23 @@ def load_mocks(mocks, pol=None):
 
         if isinstance(mocks, str):
             mocks = sorted(glob.glob(mocks))
+
+            if pol is None:
+                with h5py.File(mocks[0], "r") as handler:
+                    container_type = handler.attrs["__memh5_subclass"]
+                    if container_type == "draco.core.containers.FrequencyStackByPol":
+                        pol = ["XX", "YY"]
+                    else:
+                        pol = ["XX-XX", "YY-YY"]
+
+        else:
+            if pol is None:
+                if isinstance(mocks[0], containers.MockFrequencyStackByPol):
+                    pol = ["XX", "YY"]
+                else:
+                    pol = ["XX-XX", "YY-YY"]
+
+        pol = np.atleast_1d(pol)
 
         temp = []
         for mfile in mocks:
@@ -591,7 +650,8 @@ def load_mocks(mocks, pol=None):
             else:
                 out.spectrum[slc_out] = mock.spectrum[:]
                 out.samp_var[slc_out] = mock.samp_var[:]
-                out.var[slc_out] = mock.var[:]
+                if mm == 0:
+                    out.var[:] = mock.var[:]
 
         if isinstance(temp[0], containers.PowerSpectrum1D):
             out.k1D[:] = mock.k1D[:]
