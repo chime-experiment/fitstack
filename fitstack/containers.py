@@ -90,15 +90,17 @@ class PowerSpectrumSet1D(PowerSpectrum1D):
 
 
 class MockPowerSpectrum1D(PowerSpectrum1D):
-    """Container for multiple 1d power spectrum.
+    """Container for multiple 1d power spectra.
 
     This will most commonly be used to store several noise power spectra,
     for use in computing a covariance matrix. The spectra will be indexed
     by the `mock` axis, to carry over conventions from the stacking analysis.
 
-    The `spectrum` and `samp_var` datasets will vary from mock to mock,
-    but the other `PowerSpectrum1D` datasets (`var`, `neff`, and `k1D`) will
-    be the same for every mock, so we don't redefine them in this container.
+    The `spectrum` and `samp_var` datasets will vary from mock to mock.
+    `var` may be the same for every mock, but we allow for it to vary.
+    The other `PowerSpectrum1D` datasets (`neff`, and `k1D`) will
+    be the same for every mock, so we only redefine them here to ensure
+    that they're not distributed by default.
     """
 
     _axes = ("mock",)
@@ -116,20 +118,38 @@ class MockPowerSpectrum1D(PowerSpectrum1D):
             "initialise": True,
             "distributed": False,
         },
+        "var": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "neff": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "k1D": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
     }
 
 
 class MockPowerSpectrum2D(PowerSpectrum2D):
-    """Container for multiple 2d power spectrum.
+    """Container for multiple 2d power spectra.
 
     This will most commonly be used to store several noise power spectra,
     for use in computing a covariance matrix. The spectra will be indexed
     by the `mock` axis, to carry over conventions from the stacking analysis.
 
-    The `spectrum` dataset will vary from mock to mock, but the other 
-    `PowerSpectrum2D` datasets (`weight`, `neff`, `mask`, `kpara`, and 
-    `kperp`) will be the same for every mock, so we don't redefine them in 
-    this container.
+    The `spectrum` dataset will vary from mock to mock. `weight` may be
+    the same for every mock, but we allow for it to vary. The other 
+    `PowerSpectrum2D` datasets (`neff`, `mask`) will be the same for every 
+    mock, so we don't redefine them in this container.
     """
 
     _axes = ("mock",)
@@ -138,6 +158,25 @@ class MockPowerSpectrum2D(PowerSpectrum2D):
         "spectrum": {
             "axes": ["mock", "pol", "delay", "uv_dist"],
             "dtype": np.complex128,
+            "initialise": True,
+            "distributed": False,
+        },
+        "weight": {
+            "axes": ["mock", "pol", "delay", "uv_dist"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "neff": {
+            "axes": ["pol", "delay", "uv_dist"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+            "distributed_axis": "delay",
+        },
+        "mask": {
+            "axes": ["pol", "delay", "uv_dist"],
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
