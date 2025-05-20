@@ -182,8 +182,8 @@ def combine_pol(cnt):
     ----------
     cnt : container
         Input container. Can be one of FrequencyStackByPol,
-        MockFrequencyStackByPol, Powerspec1D, MockPowerspec1D,
-        Powerspec2D, MockPowerspec2D.
+        MockFrequencyStackByPol, PowerSpectrum1D, MockPowerSpectrum1D,
+        PowerSpectrum2D, MockPowerSpectrum2D.
 
     Returns
     -------
@@ -193,21 +193,23 @@ def combine_pol(cnt):
         The sum of the weights for the XX and YY polarisations.
     x : np.ndarray
         The weighted average of the independent coordinate (frequency lag, k,
-        or dict with kpar and kperp keys) for the XX and YY polarisations.
+        or dict with kpara and kperp keys) for the XX and YY polarisations.
     """
 
+    _dset_name = {"stack": "stack", "ps2D": "spectrum", "ps1D": "spectrum"}
+
     if isinstance(cnt, containers.FrequencyStackByPol):
-        dset = "stack"
-    elif isinstance(cnt, containers.Powerspec2D):
-        dset = "ps2D"
+        data_type = "stack"
+    elif isinstance(cnt, containers.PowerSpectrum2D):
+        data_type = "ps2D"
     else:
-        dset = "ps1D"
+        data_type = "ps1D"
 
     pol = list(cnt.pol)
 
     # If operating on power spectra, check that ordering of k-bin centers is
     # identical for the two polarizations. (Otherwise, we shouldn't combine them.)
-    if dset == "ps1D":
+    if data_type == "ps1D":
         isort = np.argsort(cnt.k1D)
         ax = list(cnt.k1D.attrs["axis"]).index("pol")
         slc_XX = (slice(None),) * ax + (pol.index("XX"),)
@@ -218,15 +220,14 @@ def combine_pol(cnt):
                 "for different polarizations, so can't combine"
             )
 
-    y = cnt[dset][:]
-    if dset == "stack":
-        w = cnt["weight"][:]
-    elif dset == "ps2D":
-        w = cnt["ps2D_weight"][:]
-    else:
-        w = tools.invert_no_zero(cnt["ps1D_var"][:])
+    y = cnt[_dset_name[data_type]]
 
-    ax = list(cnt[dset].attrs["axis"]).index("pol")
+    if (data_type == "stack") | (data_type == "ps2D"):
+        w = cnt["weight"][:]
+    else:
+        w = tools.invert_no_zero(cnt["var"][:])
+
+    ax = list(cnt[_dset_name[data_type]].attrs["axis"]).index("pol")
 
     flag = np.zeros_like(w)
     for pstr in ["XX", "YY"]:
@@ -240,12 +241,12 @@ def combine_pol(cnt):
 
     z = np.sum(w * y, axis=ax) * tools.invert_no_zero(wz)
 
-    if dset == "stack":
+    if data_type == "stack":
         # Frequencies are identical for XX and YY, so no average needed
         x = cnt.freq
-    elif dset == "ps2D":
+    elif data_type == "ps2D":
         # k_par and k_perp are identical for XX and YY, so no average needed here either
-        x = {"kpar": cnt.kpar, "kperp": cnt.kperp}
+        x = {"kpara": cnt.kpara, "kperp": cnt.kperp}
     else:
         x = cnt.k1D[:]
         x = np.sum(w * x, axis=ax) * tools.invert_no_zero(wz)
@@ -258,7 +259,7 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
 
     Parameters
     ----------
-    cnt : FrequencyStackByPol, Powerspec1D, or Powerspec2D
+    cnt : FrequencyStackByPol, PowerSpectrum1D, or PowerSpectrum2D
         Container with stack or power spectrum.
     pol : list of str
         The polarisations to select.  If not provided,
@@ -273,14 +274,14 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
 
     Returns
     -------
-    data : np.ndarray[..., npol, nx] or np.ndarray[..., npol, nkpar, nkperp]
+    data : np.ndarray[..., npol, nx] or np.ndarray[..., npol, nkpara, nkperp]
         The stack or power spectrum dataset for the selected
         polarisations.
         If combine is True, there will be an additional
         element that is the weighted sum of the
         stack/power spectrum for
         the "XX" and "YY" polarisations.
-    weight : np.ndarray[..., npol, nx] or np.ndarray[..., npol, nkpar, nkperp]
+    weight : np.ndarray[..., npol, nx] or np.ndarray[..., npol, nkpara, nkperp]
         The weight dataset for the selected polarisations.
         If combine is True, there will be an additional
         element that is the sum of the weights for
@@ -289,9 +290,18 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
         List of polarizations in output arrays.
     x : np.ndarray[..., npol, nx] or dict
         Frequencies or k values for the selected polarizations.
-        If dealing with 2d power spectrum, dict has kpar and kperp keys,
+        If dealing with 2d power spectrum, dict has kpara and kperp keys,
         each as np.ndarray[..., npol, nk].
     """
+
+    _dset_name = {"stack": "stack", "ps2D": "spectrum", "ps1D": "spectrum"}
+
+    if isinstance(cnt, containers.FrequencyStackByPol):
+        data_type = "stack"
+    elif isinstance(cnt, containers.PowerSpectrum2D):
+        data_type = "ps2D"
+    else:
+        data_type = "ps1D"
 
     if pol is None:
         pol = ["XX", "YY"]
@@ -305,10 +315,8 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
 
     if isinstance(cnt, containers.FrequencyStackByPol):
         dset = "stack"
-    elif isinstance(cnt, containers.Powerspec2D):
-        dset = "ps2D"
     else:
-        dset = "ps1D"
+        dset = "spectrum"
 
     ax = list(cnt[dset].attrs["axis"]).index("pol")
     shp = list(cnt[dset].shape)
@@ -316,11 +324,11 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
 
     data = np.zeros(shp, dtype=cnt[dset].dtype)
     weight = np.zeros(shp, dtype=cnt[dset].dtype)
-    if dset != "ps2D":
+    if data_type != "ps2D":
         x = np.zeros(shp, dtype=cnt[dset].dtype)
     else:
         x = {
-            "kpar": np.zeros(tuple(shp[:-2]) + (len(cnt.kpar),), dtype=cnt.kpar.dtype),
+            "kpara": np.zeros(tuple(shp[:-2]) + (len(cnt.kpara),), dtype=cnt.kpara.dtype),
             "kperp": np.zeros(
                 tuple(shp[:-2]) + (len(cnt.kperp),), dtype=cnt.kperp.dtype
             ),
@@ -330,24 +338,22 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
     slc_out = (slice(None),) * ax + (slice(0, num_cpol),)
 
     data[slc_out] = cnt[dset][slc_in]
-    if dset == "stack":
+    if (data_type == "stack") | (data_type == "ps2D"):
         weight[slc_out] = cnt["weight"][slc_in]
-    elif dset == "ps2D":
-        weight[slc_out] = cnt["ps2D_weight"][slc_in]
     else:
-        weight[slc_out] = tools.invert_no_zero(cnt.datasets["ps1D_var"][slc_in])
+        weight[slc_out] = tools.invert_no_zero(cnt.datasets["var"][slc_in])
 
-    if dset == "stack":
+    if data_type == "stack":
         x[slc_out] = cnt.freq[..., :]
-    elif dset == "ps2D":
-        x["kpar"][slc_out] = cnt.kpar[..., :]
+    elif data_type == "ps2D":
+        x["kpara"][slc_out] = cnt.kpara[..., :]
         x["kperp"][slc_out] = cnt.kperp[..., :]
     else:
         x[slc_out] = cnt.k1D[:]
 
-    if dset == "ps2D" and return_signal_mask:
-        signal_mask = np.zeros(shp, dtype=cnt.signal_mask.dtype)
-        signal_mask[slc_out] = cnt.signal_mask[slc_in]
+    if data_type == "ps2D" and return_signal_mask:
+        signal_mask = np.zeros(shp, dtype=cnt.mask.dtype)
+        signal_mask[slc_out] = cnt.mask[slc_in]
 
     if combine:
         old_slc_out = slc_out
@@ -355,8 +361,8 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
         temp, wtemp, xtemp = combine_pol(cnt)
         data[slc_out] = temp
         weight[slc_out] = wtemp
-        if dset == "ps2D":
-            x["kpar"][slc_out] = xtemp["kpar"]
+        if data_type == "ps2D":
+            x["kpara"][slc_out] = xtemp["kpara"]
             x["kperp"][slc_out] = xtemp["kperp"]
             if return_signal_mask:
                 signal_mask[slc_out] = np.all(signal_mask[old_slc_out], axis=ax)
@@ -375,7 +381,7 @@ def average_data(cnt, pol=None, combine=True, sort=True):
 
     Parameters
     ----------
-    cnt : MockFrequencyStackByPol, MockPowerspec1D, or MockPowerspec2D
+    cnt : MockFrequencyStackByPol, MockPowerSpectrum1D, or MockPowerSpectrum2D
         Container with stacks or power spectra to average.
     pol : list of str
         The polarisations to select.  If not provided,
@@ -390,20 +396,20 @@ def average_data(cnt, pol=None, combine=True, sort=True):
 
     Returns
     -------
-    avg : FrequencyStackByPol, Powerspec1D, or Powerspec2D
+    avg : FrequencyStackByPol, PowerSpectrum1D, or PowerSpectrum2D
         Container that has collapsed over the mock axis.
-        The stack, ps1D, or ps2D dataset contains the mean. For stacks,
+        The stack or spectrum dataset contains the mean. For stacks,
         the weight dataset contains the inverse variance,
-        while for power spectra, the ps1D_var dataset contains
-        the variance or the ps2D_weight dataset contains the
-        inverse variance.
+        while for power spectra, the var dataset contains
+        the variance (1d) or the weight dataset contains the
+        inverse variance (2d).
     """
 
     darr, _, dpol, dx = initialize_pol(cnt, pol=pol, combine=combine)
     ndata = darr.shape[0]
 
     # If requested, sort by freq/k
-    if sort and not isinstance(cnt, containers.MockPowerspec2D):
+    if sort and not isinstance(cnt, containers.MockPowerSpectrum2D):
         isort = np.argsort(dx, axis=-1)
         dx = np.take_along_axis(dx, isort, axis=-1)
         darr = np.take_along_axis(darr, isort, axis=-1)
@@ -415,31 +421,29 @@ def average_data(cnt, pol=None, combine=True, sort=True):
         )
         avg.stack[:] = np.mean(darr, axis=0)
         avg.weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
-    elif isinstance(cnt, containers.MockPowerspec2D):
-        avg = containers.Powerspec2D(
+    elif isinstance(cnt, containers.MockPowerSpectrum2D):
+        avg = containers.PowerSpectrum2D(
             pol=np.array(dpol),
-            kpar=cnt.kpar,
+            kpara=cnt.kpara,
             kperp=cnt.kperp,
             attrs_from=cnt,
             distributed=False,
         )
-        avg.ps2D[:] = np.mean(darr, axis=0)
+        avg.spectrum[:] = np.mean(darr, axis=0)
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
-            avg.ps2D_weight[:] = np.ones_like(avg.ps2D[:])
+            avg.weight[:] = np.ones_like(avg.spectrum[:])
         else:
-            # variance calculation for multiple mocks
-            avg.ps2D_weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
-
-
+            # Variance calculation for multiple mocks
+            avg.weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
     else:
-        avg = containers.Powerspec1D(
+        avg = containers.PowerSpectrum1D(
             pol=np.array(dpol), k=cnt.index_map["k"], attrs_from=cnt, distributed=False
         )
         avg.k1D[:] = np.mean(dx, axis=0)
-        avg.ps1D[:] = np.mean(darr, axis=0)
-        avg.ps1D_var[:] = np.var(darr, axis=0)
+        avg.spectrum[:] = np.mean(darr, axis=0)
+        avg.var[:] = np.var(darr, axis=0)
 
     avg.attrs["num"] = ndata
 
@@ -492,8 +496,8 @@ def load_mocks(mocks, pol=None):
     mocks : list of str; container; list of containers; or glob
         Set of stacks on mock catalogs or noise power spectra.
         This can either be a MockFrequencyStackByPol,
-        MockPowerspec1D, or MockPowerspec2D container; a list of
-        FrequencyStackByPol, Powerspec1D, or Powerspec2D containers;
+        MockPowerSpectrum1D, or MockPowerSpectrum2D container; a list of
+        FrequencyStackByPol, PowerSpectrum1D, or PowerSpectrum2D containers;
         or a filename or list of filenames that
         hold these types of containers and will be loaded from disk.
     pol : list of str
@@ -501,7 +505,7 @@ def load_mocks(mocks, pol=None):
 
     Returns
     -------
-    out : MockFrequencyStackByPol, MockPowerspec1D, or MockPowerspec2D
+    out : MockFrequencyStackByPol, MockPowerSpectrum1D, or MockPowerSpectrum2D
         All mock catalogs or power spectra in a single container.
     """
 
@@ -514,8 +518,8 @@ def load_mocks(mocks, pol=None):
         mocks,
         (
             containers.MockFrequencyStackByPol,
-            containers.MockPowerspec1D,
-            containers.MockPowerspec2D,
+            containers.MockPowerSpectrum1D,
+            containers.MockPowerSpectrum2D,
         ),
     ):
 
@@ -557,14 +561,14 @@ def load_mocks(mocks, pol=None):
                 axes_from=temp[0],
                 attrs_from=temp[0],
             )
-        elif isinstance(temp[0], containers.Powerspec2D):
-            out = containers.MockPowerspec2D(
+        elif isinstance(temp[0], containers.PowerSpectrum2D):
+            out = containers.MockPowerSpectrum2D(
                 mock=np.arange(boundaries[-1], dtype=int),
                 axes_from=temp[0],
                 attrs_from=temp[0],
             )
         else:
-            out = containers.MockPowerspec1D(
+            out = containers.MockPowerSpectrum1D(
                 mock=np.arange(boundaries[-1], dtype=int),
                 axes_from=temp[0],
                 attrs_from=temp[0],
@@ -580,16 +584,16 @@ def load_mocks(mocks, pol=None):
             if isinstance(temp[0], containers.FrequencyStackByPol):
                 out.stack[slc_out] = mock.stack[:]
                 out.weight[slc_out] = mock.weight[:]
-            elif isinstance(temp[0], containers.Powerspec2D):
-                out.ps2D[slc_out] = mock.ps2D[:]
-                out.ps2D_weight[slc_out] = mock.ps2D_weight[:]
-                out.signal_mask[slc_out] = mock.signal_mask[:]
+            elif isinstance(temp[0], containers.PowerSpectrum2D):
+                out.spectrum[slc_out] = mock.spectrum[:]
+                out.weight[slc_out] = mock.weight[:]
+                out.mask[slc_out] = mock.mask[:]
             else:
-                out.ps1D[slc_out] = mock.ps1D[:]
-                out.ps1D_error[slc_out] = mock.ps1D_error[:]
-                out.ps1D_var[slc_out] = mock.ps1D_var[:]
+                out.spectrum[slc_out] = mock.spectrum[:]
+                out.samp_var[slc_out] = mock.samp_var[:]
+                out.var[slc_out] = mock.var[:]
 
-        if isinstance(temp[0], containers.Powerspec1D):
+        if isinstance(temp[0], containers.PowerSpectrum1D):
             out.k1D[:] = mock.k1D[:]
 
     return out
