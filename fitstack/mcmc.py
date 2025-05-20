@@ -71,22 +71,23 @@ def run_mcmc(
 
     Parameters
     ----------
-    data : FrequencyStackByPol, Powerspec1D, or str
+    data : FrequencyStackByPol, PowerSpectrum1D, or str
         Measurements of stacking or power spectrum.
-        This can either be a FrequencyStackByPol or Powerspec1D container,
-        or the name of a file that holds such a container and will be
-        loaded from disk.
+        This can either be a FrequencyStackByPol or PowerSpectrum1D 
+        container, or the name of a file that holds such a container 
+        and will be loaded from disk.
     mocks : container, list of containers, str, or list of str
         Mocks for estimating a noise covariance.
-        This can either be a MockFrequencyStackByPol or MockPowerspec1D
-        container, a list of FrequencyStackByPol or Powerspec1D containers,
-        or the name of a file or a list of filenames that hold
-        such containers and will be loaded from disk.
-    data_2d : Powerspec2D or str
-        Measurements of 2d power spectrum, either as a Powerspec2D container
-        or filename. When fitting to 1d power spectrum measurements with a model
-        that starts in 2d, weights and (kpar,kperp) masking will be taken from
-        here. Ignored if not needed.
+        This can either be a MockFrequencyStackByPol or 
+        MockPowerSpectrum1D container, a list of FrequencyStackByPol or 
+        PowerSpectrum1D containers, or the name of a file or a list of
+        filenames that hold such containers and will be loaded from disk.
+    data_2d : PowerSpectrum2D or str
+        Measurements of 2d power spectrum, either as a PowerSpectrum2D 
+        container or filename. When fitting to 1d power spectrum 
+        measurements with a model that starts in 2d, weights and 
+        (kpar,kperp) masking will be taken from here. Ignored if not 
+        needed.
     transfer : FrequencyStackByPol or str
         The transfer function of the pipeline (only implemented for stacking).
         The model for the stacked
@@ -95,10 +96,10 @@ def run_mcmc(
         FrequencyStackByPol container or the name of a file that
         holds such a container and will be loaded from disk.
         If None, then a transfer function is not applied.  Default is None.
-    template : FrequencyStackByPol, Powerspec1D, or str
+    template : FrequencyStackByPol, PowerSpectrum1D, or str
         Template for the stacked signal.  This can either be a
-        FrequencyStackByPol or Powerspec1D container, or the name of a file that
-        holds such a container and will be loaded from disk.
+        FrequencyStackByPol or PowerSpectrum1D container, or the name of 
+        a file that holds such a container and will be loaded from disk.
         Note that not all models require templates.  Default is None.
     pol_fit : {"XX"|"YY"|"I"|"joint"}
         Polarisation to fit.  Here "I" refers to the weighted sum of the
@@ -106,7 +107,7 @@ def run_mcmc(
         fit to the "XX" and "YY" polarisations.
     model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
                   "SimulationTemplate"|"SimulationTemplateFoG"|
-                  "SimulationTemplateFoGAltParam"|"AutoConstan"t"|
+                  "SimulationTemplateFoGAltParam"|"AutoConstant"|
                   "AutoSimulationTemplate2Dto1D"}
         Name of the model to fit.  Specify the class name from the
         fitstack.models module.
@@ -138,10 +139,10 @@ def run_mcmc(
         Default is True.
     recompute_weight : bool
         Set the weight dataset to the inverse variance over the mock catalogs
-        in a stacking analysis, or set the ps1D_var dataset to the variance over
+        in a stacking analysis, or set the 1D `var` dataset to the variance over
         the noise power spectra in a power spectrum analysis.
         This is only used when averaging the "XX" and "YY" polarisations to
-        determine the "I" polarisation.  Otherwise whatever weight/ps1D_var dataset
+        determine the "I" polarisation.  Otherwise whatever weight/var dataset
         is saved to the file will be used.  Default is True.
     param_spec : dict
         Dictionary that specifies the prior distribution for each parameter.
@@ -158,7 +159,7 @@ def run_mcmc(
 
     Returns
     -------
-    results : MockStack1D
+    results : MCMCFit
         Container with the results of the fit, including
         parameter chains, chi-squared chains, autocorrelation length,
         acceptance franction, parameter percentiles, best-fit model,
@@ -184,15 +185,15 @@ def run_mcmc(
     # (stack or power spectrum)
     if isinstance(data, containers.FrequencyStackByPol):
         dset = "stack"
-    elif isinstance(data, containers.Powerspec1D):
-        dset = "ps1D"
+    elif isinstance(data, containers.PowerSpectrum1D):
+        dset = "spectrum"
     else:
         raise RuntimeError(f"Input container {type(data)} not supported")
 
     # If using 1d power spectrum measurements with a 2d power spectrum model, load
     # 2d measurements
     ps2d_model = model_name in PS2D_SIMULATION_MODELS
-    if dset == "ps1D" and ps2d_model:
+    if dset == "spectrum" and ps2d_model:
         if data_2d is None:
             raise RuntimeError(
                 "Must specify data_2d if fitting 1d power spectrum "
@@ -203,7 +204,7 @@ def run_mcmc(
 
     # Load the transfer function (not implemented for power spectra)
     if transfer is not None and isinstance(transfer, str):
-        if dset == "ps1D":
+        if dset == "spectrum":
             raise NotImplementedError(
                 "Transfer function convolution not implemented for power spectrum"
             )
@@ -233,12 +234,12 @@ def run_mcmc(
                     )
                     container.weight[:] = inv_var[expand]
                 else:
-                    variance = np.var(mocks.ps1D[:], axis=0)
+                    variance = np.var(mocks.spectrum[:], axis=0)
                     expand = tuple(
                         slice(None) if ax in axes else None
-                        for ax in container.ps1D_var.attrs["axis"]
+                        for ax in container.var.attrs["axis"]
                     )
-                    container.ps1D_var[:] = variance[expand]
+                    container.var[:] = variance[expand]
 
     # For the simulation template, we need to provide parameters to average the polarisations
     if model_name in SIMULATION_MODELS:
@@ -259,7 +260,7 @@ def run_mcmc(
 
                 model_kwargs["nbins"] = data.k1D.shape[-1]
             else:
-                model_kwargs["weight"] = tools.invert_no_zero(data.ps1D_var[:])
+                model_kwargs["weight"] = tools.invert_no_zero(data.var[:])
 
         model_kwargs["pol"] = required_pol
         model_kwargs["combine"] = combine_pol
@@ -402,7 +403,7 @@ def run_mcmc(
         results["freq_flag"][:] = x_1d_flag
 
     else:
-        results = containers.MCMCFitPowerspec1D(
+        results = containers.MCMCFitPowerSpectrum1D(
             x=x_for_mcmc,
             k=nx,
             pol=pol,
@@ -412,7 +413,7 @@ def run_mcmc(
             param=np.array(model.param_name),
             percentile=np.array(PERCENTILE),
         )
-        results["ps1D_var"][:] = tools.invert_no_zero(weight_meas)
+        results["var"][:] = tools.invert_no_zero(weight_meas)
         results["k_flag"][:] = x_1d_flag
 
     results.attrs["seed"] = str(model.seed)

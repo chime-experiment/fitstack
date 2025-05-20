@@ -1131,5 +1131,5 @@ class AutoSimulationTemplate2Dto1DFoG(AutoSimulationTemplate2Dto1D):
     _template_class = signal.AutoSignalTemplate2DFoG
     _template_kwargs = AutoSimulationTemplate2Dto1D._template_kwargs + (
         "convolutions",
-        "kpar_range",
+        "kpara_range",
     )

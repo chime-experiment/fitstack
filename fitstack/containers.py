@@ -9,8 +9,8 @@ from draco.core.containers import (
     FrequencyStackByPol,
     MockFrequencyStackByPol,
     Stack3D,
-    Powerspec1D,
-    Powerspec2D,
+    PowerSpectrum1D,
+    PowerSpectrum2D,
 )
 
 
@@ -68,7 +68,7 @@ class StackSet3D(Stack3D):
     }
 
 
-class PowerspecSet1D(Powerspec1D):
+class PowerSpectrumSet1D(PowerSpectrum1D):
     """Container for data required to perform a model fit with a 1d power spectrum."""
 
     _axes = ("mock",)
@@ -89,36 +89,28 @@ class PowerspecSet1D(Powerspec1D):
     }
 
 
-class MockPowerspec1D(Powerspec1D):
+class MockPowerSpectrum1D(PowerSpectrum1D):
     """Container for multiple 1d power spectrum.
 
     This will most commonly be used to store several noise power spectra,
     for use in computing a covariance matrix. The spectra will be indexed
     by the `mock` axis, to carry over conventions from the stacking analysis.
+
+    The `spectrum` and `samp_var` datasets will vary from mock to mock,
+    but the other `PowerSpectrum1D` datasets (`var`, `neff`, and `k1D`) will
+    be the same for every mock, so we don't redefine them in this container.
     """
 
     _axes = ("mock",)
 
     _dataset_spec: ClassVar = {
-        "ps1D": {
+        "spectrum": {
             "axes": ["mock", "pol", "k"],
-            "dtype": np.float64,
+            "dtype": np.complex128,
             "initialise": True,
             "distributed": False,
         },
-        "ps1D_error": {
-            "axes": ["mock", "pol", "k"],
-            "dtype": np.float64,
-            "initialise": True,
-            "distributed": False,
-        },
-        "ps1D_var": {
-            "axes": ["mock", "pol", "k"],
-            "dtype": np.float64,
-            "initialise": True,
-            "distributed": False,
-        },
-        "k1D": {
+        "samp_var": {
             "axes": ["mock", "pol", "k"],
             "dtype": np.float64,
             "initialise": True,
@@ -127,32 +119,25 @@ class MockPowerspec1D(Powerspec1D):
     }
 
 
-class MockPowerspec2D(Powerspec2D):
+class MockPowerSpectrum2D(PowerSpectrum2D):
     """Container for multiple 2d power spectrum.
 
     This will most commonly be used to store several noise power spectra,
     for use in computing a covariance matrix. The spectra will be indexed
     by the `mock` axis, to carry over conventions from the stacking analysis.
+
+    The `spectrum` dataset will vary from mock to mock, but the other 
+    `PowerSpectrum2D` datasets (`weight`, `neff`, `mask`, `kpara`, and 
+    `kperp`) will be the same for every mock, so we don't redefine them in 
+    this container.
     """
 
     _axes = ("mock",)
 
     _dataset_spec: ClassVar = {
-        "ps2D": {
-            "axes": ["mock", "pol", "kpar", "kperp"],
-            "dtype": np.float64,
-            "initialise": True,
-            "distributed": False,
-        },
-        "ps2D_weight": {
-            "axes": ["mock", "pol", "kpar", "kperp"],
-            "dtype": np.float64,
-            "initialise": True,
-            "distributed": False,
-        },
-        "signal_mask": {
-            "axes": ["mock", "pol", "kpar", "kperp"],
-            "dtype": bool,
+        "spectrum": {
+            "axes": ["mock", "pol", "delay", "uv_dist"],
+            "dtype": np.complex128,
             "initialise": True,
             "distributed": False,
         },
@@ -367,8 +352,8 @@ class MCMCFit3D(MCMCFit, StackSet3D):
     }
 
 
-class MCMCFitPowerspec1D(MCMCFit, PowerspecSet1D):
-    """Container for the results of a model fit to 1D power spectrum and all associated data."""
+class MCMCFitPowerSpectrum1D(MCMCFit, PowerSpectrumSet1D):
+    """Container for a model fit to 1D power spectrum and all associated data."""
 
     _axes = ("x",)
 
