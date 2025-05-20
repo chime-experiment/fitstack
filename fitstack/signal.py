@@ -8,7 +8,7 @@ import numpy as np
 from scipy.fftpack import next_fast_len
 
 from draco.util import tools
-from draco.core.containers import FrequencyStackByPol, Powerspec1D, Powerspec2D
+from draco.core.containers import FrequencyStackByPol, PowerSpectrum1D, PowerSpectrum2D
 from draco.analysis.powerspec import get_1d_ps
 
 from . import utils
@@ -632,10 +632,10 @@ class AutoSignalTemplate2D:
             The desired polarisations.
         weight
             The weight to use when averaging over polarisations and binning
-            from 2d to 1d. Must have shape [npol, kpar, kperp].
+            from 2d to 1d. Must have shape [npol, kpara, kperp].
         signal_mask
             Boolean mask to use when binning from 2d down to 1d.
-            Must have shape [npol, kpar, kperp].
+            Must have shape [npol, kpara, kperp].
         combine
             Add an element to the polarisation axis called I that
             is the weighted sum of the XX and YY polarisation.
@@ -703,12 +703,12 @@ class AutoSignalTemplate2D:
         self._signal_mask = (
             signal_mask
             if signal_mask is not None
-            else next(iter(ps2Ds.values())).signal_mask[:].copy()
+            else next(iter(ps2Ds.values())).mask[:].copy()
         )
         self._ps2D_weight = (
             weight
             if weight is not None
-            else next(iter(ps2Ds.values())).ps2D_weight[:].copy()
+            else next(iter(ps2Ds.values())).weight[:].copy()
         )
 
         # Try and construct all the required templates from the stacks
@@ -718,7 +718,7 @@ class AutoSignalTemplate2D:
 
     def _interpret_ps2Ds(
         self,
-        ps2Ds: Dict[str, Powerspec1D],
+        ps2Ds: Dict[str, PowerSpectrum1D],
     ):
         # Generate the required templates from the 2d power spectra
 
@@ -727,10 +727,10 @@ class AutoSignalTemplate2D:
 
         ps2D_modes = {}
 
-        # Get the first kpar, kperp axes as references
-        self._kpar = next(iter(ps2Ds.values())).kpar[:].copy()
+        # Get the first kpara, kperp axes as references
+        self._kpara = next(iter(ps2Ds.values())).kpara[:].copy()
         self._kperp = next(iter(ps2Ds.values())).kperp[:].copy()
-        self._kpar.flags.writeable = False
+        self._kpara.flags.writeable = False
         self._kperp.flags.writeable = False
 
         def _check_load_ps2D(key):
@@ -741,7 +741,7 @@ class AutoSignalTemplate2D:
 
             ps2D = ps2Ds[key]
 
-            if not np.array_equal(ps2D.kpar[:], self._kpar):
+            if not np.array_equal(ps2D.kpara[:], self._kpara):
                 raise RuntimeError(
                     f"k_par values in power spectrum {key} do not match reference."
                 )
@@ -752,9 +752,9 @@ class AutoSignalTemplate2D:
                 )
 
             return (
-                self._factor * ps2D.ps2D[:],
+                self._factor * ps2D.spectrum[:],
                 self._factor**2
-                * tools.invert_no_zero(ps2D.attrs["num"] * ps2D.ps2D_weight[:]),
+                * tools.invert_no_zero(ps2D.attrs["num"] * ps2D.weight[:]),
             )
 
         # For all linear component terms, load them and construct the various HI,v
@@ -829,7 +829,7 @@ class AutoSignalTemplate2D:
         Returns
         -------
         signal
-            Signal template for the given parameters. An array of [pol, kpar, kperp].
+            Signal template for the given parameters. An array of [pol, kpara, kperp].
         """
 
         def _combine(vec):
@@ -904,7 +904,7 @@ class AutoSignalTemplate2D:
             _, signal_1D[ipol], _, _ = get_1d_ps(
                 _signal_2D[ipol],
                 self._kperp,
-                self._kpar,
+                self._kpara,
                 self._ps2D_weight[ipol],
                 self._signal_mask[ipol],
                 self._nbins + 1,
@@ -922,9 +922,9 @@ class AutoSignalTemplate2D:
         return signal
 
     @property
-    def kpar(self):
-        """Get k_par values the template is defined at."""
-        return self._kpar
+    def kpara(self):
+        """Get k_para values the template is defined at."""
+        return self._kpara
 
     @property
     def kperp(self):
@@ -958,7 +958,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         A dictionary of the expected convolution parameters, giving their name (key),
         and a tuple of the parameter difference used in the simulations (between the
         perturbed sim and the base values) and the fiducial value of the parameter.
-    kpar_range
+    kpara_range
         The lower and upper boundary of k_parallel that will be used to fit for
         the effective scale of the base convolution kernel.
         Defaults to (0, 5) Mpc^-1.
@@ -968,7 +968,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         self,
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         convolutions: Optional[Dict[str, Tuple[float, float]]] = None,
-        kpar_range: Optional[Tuple[float, float]] = None,
+        kpara_range: Optional[Tuple[float, float]] = None,
         z_eff: Optional[float] = None,  # effective redshift      
         *args,
         **kwargs,
@@ -987,20 +987,20 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             convolutions = {
                 "FoGh": (0.2, 1.0),
             }
-        if kpar_range is None:
-            kpar_range = (0.0, 5.0)
+        if kpara_range is None:
+            kpara_range = (0.0, 5.0)
 
         self._convolutions = convolutions
-        self._kpar_range = kpar_range
+        self._kpara_range = kpara_range
 
         super().__init__(derivs=derivs, *args, **kwargs)
         logger.debug(f"Using convolution parameters: {self._convolutions}")
         logger.debug(
-            f"Fitting effective FoG scale over k_par range: {self._kpar_range}"
+            f"Fitting effective FoG scale over k_para range: {self._kpara_range}"
         )
 
     def _solve_scale(
-        self, base: Powerspec2D, deriv: Powerspec2D, alpha: float
+        self, base: PowerSpectrum2D, deriv: PowerSpectrum2D, alpha: float
     ) -> np.ndarray:
         """Solve for the effective scale of the FoG damping.
 
@@ -1033,14 +1033,14 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             The effective scale of the transfer function.
         """
 
-        kpar2 = self.kpar[np.newaxis, :, np.newaxis] ** 2
+        kpara2 = self.kpara[np.newaxis, :, np.newaxis] ** 2
 
-        ps2D_base = base.ps2D[:]
-        ps2D_deriv = deriv.ps2D[:]
+        ps2D_base = base.spectrum[:]
+        ps2D_deriv = deriv.spectrum[:]
 
         # Get variance of base and deriv ps2D, for usage in error propagation
-        var_ps2D_base = tools.invert_no_zero(base.ps2D_weight[:])
-        var_ps2D_deriv = tools.invert_no_zero(deriv.ps2D_weight[:])
+        var_ps2D_base = tools.invert_no_zero(base.weight[:])
+        var_ps2D_deriv = tools.invert_no_zero(deriv.weight[:])
 
         # Compute ratio of base and deriv ps2D, and compute variance in ratio using
         # error propagation
@@ -1070,20 +1070,20 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             * (alpha**2 - r_sqrt) ** 4
             * tools.invert_no_zero((alpha * 2 - 1.0) ** 2 * var_ratio)
         )
-        w_mask = (self.kpar >= self._kpar_range[0]) & (self.kpar <= self._kpar_range[1])
+        w_mask = (self.kpara >= self._kpara_range[0]) & (self.kpara <= self._kpara_range[1])
         w *= w_mask[np.newaxis, :, np.newaxis]
 
         # From the definition of y, we know that s^2 = y/kpar^2. We optimally
         # estimate s^2 by taking an inverse-variance weighted average of y/kpar^2
         # over all (kpar,kperp) values. (We'll only use s^2 in calculations, so it
         # makes sense to estimate s^2 instead of s.)
-        scale2 = np.sum(w * kpar2 * y, axis=(-1, -2)) * tools.invert_no_zero(
-            np.sum(w * kpar2**2, axis=(-1, -2))
+        scale2 = np.sum(w * kpara2 * y, axis=(-1, -2)) * tools.invert_no_zero(
+            np.sum(w * kpara2**2, axis=(-1, -2))
         )
 
         return np.sqrt(scale2)
 
-    def _interpret_ps2Ds(self, ps2Ds: Dict[str, Powerspec1D]):
+    def _interpret_ps2Ds(self, ps2Ds: Dict[str, PowerSpectrum1D]):
 
         super()._interpret_ps2Ds(ps2Ds)
 
@@ -1125,14 +1125,14 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
 
         Parameters
         ----------
-        signal : np.ndarray[npol, nkpar, nkperp]
+        signal : np.ndarray[npol, nkpara, nkperp]
             The 2d power spectrum before adding the non-component contributions.
         kwargs : dict
             All parameter values.
 
         Returns
         -------
-        signal : np.ndarray[npol, nkpar, nkperp]
+        signal : np.ndarray[npol, nkpara, nkperp]
             The 2d power spectrum after multiplication with the relative FoG kernel.
         """
         # Calculate the conversion factor
@@ -1156,8 +1156,8 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             scale = alpha * scale0
 
             # Multiply kernel into signal
-            signal *= (1.0 + (scale0 * C * self.kpar[np.newaxis, :, np.newaxis]) ** 2) / (
-                1.0 + (scale * C * self.kpar[np.newaxis, :, np.newaxis]) ** 2
+            signal *= (1.0 + (scale0 * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2) / (
+                1.0 + (scale * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2
             )
 
         return signal
