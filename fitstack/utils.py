@@ -446,12 +446,14 @@ def average_data(cnt, pol=None, combine=True, sort=True):
     elif isinstance(cnt, containers.MockPowerSpectrum2D):
         avg = containers.PowerSpectrum2D(
             pol=np.array(dpol),
-            kpara=cnt.kpara,
-            kperp=cnt.kperp,
+            delay=cnt.index_map["delay"],
+            uv_dist=cnt.index_map["uv_dist"],
             attrs_from=cnt,
             distributed=False,
         )
         avg.spectrum[:] = np.mean(darr, axis=0)
+        avg.kpara[:] = cnt.kpara[:]
+        avg.kperp[:] = cnt.kperp[:]
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
@@ -646,7 +648,10 @@ def load_mocks(mocks, pol=None):
             elif isinstance(temp[0], containers.PowerSpectrum2D):
                 out.spectrum[slc_out] = mock.spectrum[:]
                 out.weight[slc_out] = mock.weight[:]
-                out.mask[slc_out] = mock.mask[:]
+                if mm == 0:
+                    out.mask[:] = mock.mask[:]
+                    out.kpara[:] = mock.kpara[:]
+                    out.kperp[:] = mock.kperp[:]
             else:
                 out.spectrum[slc_out] = mock.spectrum[:]
                 out.samp_var[slc_out] = mock.samp_var[:]
