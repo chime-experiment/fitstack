@@ -54,7 +54,7 @@ class Model(object):
     param_name = []
     _param_spec = {}
 
-    def __init__(self, seed=None, **param_spec):
+    def __init__(self, seed=None, force_real=True, **param_spec):
         """Initialize the model.
 
         Parameters
@@ -63,6 +63,11 @@ class Model(object):
             Seed to use for random number generation.
             If the seed is not provided, then a random
             seed will be taken from system entropy.
+        force_real : bool
+            Force input datasets to be real. Assumes that input 
+            datasets have been previously examined to verify 
+            that imaginary parts are small and/or unimportant. 
+            Default: True.
         param_spec : dict
             Specifies the prior distribution for each parameter.
             See the description of the class attribute of the
@@ -76,6 +81,8 @@ class Model(object):
 
         self.seed = seed
         self.rng = np.random.Generator(np.random.SFC64(seed))
+
+        self.force_real = force_real
 
         defaults = self.default_param_spec()
         self.param_spec = {}
@@ -104,6 +111,9 @@ class Model(object):
         self.param_name_fixed = [
             name for name in self.param_name if self.param_spec[name]["fixed"]
         ]
+
+    def _re(self, x):
+        return np.real(x) if self.force_real else x
 
     def set_data(self, **kwargs):
         """Save any ancillary data needed to evaluate the probability distribution.
@@ -951,7 +961,7 @@ class AutoScaledTemplate(Model):
 
         amp = theta[0]
 
-        model = amp * template
+        model = amp * self._re(template)
 
         return model
 
@@ -1038,6 +1048,9 @@ class AutoSimulationTemplate2Dto1D(Model):
         **kwargs,
     ):
 
+
+        super().__init__(*args, **kwargs)
+
         if derivs is None:
             derivs = {"lin": (-1.0, 1.0)}
 
@@ -1055,10 +1068,9 @@ class AutoSimulationTemplate2Dto1D(Model):
             aliases=aliases,
             nbins=nbins,
             logbins=logbins,
+            force_real=self.force_real,
             **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
         )
-
-        super().__init__(*args, **kwargs)
 
     def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
         """Evaluate the model.

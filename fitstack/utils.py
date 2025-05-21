@@ -430,6 +430,9 @@ def average_data(cnt, pol=None, combine=True, sort=True):
     darr, _, dpol, dx = initialize_pol(cnt, pol=pol, combine=combine)
     ndata = darr.shape[0]
 
+    # freq/k should always be real
+    dx = np.real(dx)
+
     # If requested, sort by freq/k
     if sort and not isinstance(cnt, containers.MockPowerSpectrum2D):
         isort = np.argsort(dx, axis=-1)
@@ -457,7 +460,7 @@ def average_data(cnt, pol=None, combine=True, sort=True):
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
-            avg.weight[:] = np.ones_like(avg.spectrum[:])
+            avg.weight[:] = np.ones_like(avg.spectrum[:], dtype=int)
         else:
             # Variance calculation for multiple mocks
             avg.weight[:] = tools.invert_no_zero(np.var(darr, axis=0))
