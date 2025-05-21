@@ -67,6 +67,7 @@ def run_mcmc(
     param_spec=None,
     seed=None,
     flag_ind=None,
+    force_real=True,
 ):
     """Fit a model to the source stack using an MCMC.
 
@@ -157,6 +158,10 @@ def run_mcmc(
     flag_ind : list
         List of extra indices to flag. These are indices into the flattened data *after*
         all other selections have been applied.
+    force_real : bool
+        Force input datasets to be real. Assumes that input datasets have
+        been previously examined to verify that imaginary parts are small and/or
+        unimportant. Default: True.
 
     Returns
     -------
@@ -168,6 +173,9 @@ def run_mcmc(
         and ancillary data products, as well as the covariance and
         precision matrix inferred from the mocks.
     """
+
+    def _re(x):
+        return np.real(x) if force_real else x
 
     # Co-pols are stored as XX, YY for stacking and XX-XX, YY-YY
     # for power spectra. Internally, we always use XX, YY, but we
@@ -253,14 +261,14 @@ def run_mcmc(
         for container in [data, mocks, template, transfer]:
             if container is not None:
                 if dset == "stack":
-                    inv_var = tools.invert_no_zero(np.var(mocks.stack[:], axis=0))
+                    inv_var = tools.invert_no_zero(np.var(_re(mocks.stack[:]), axis=0))
                     expand = tuple(
                         slice(None) if ax in axes else None
                         for ax in container.weight.attrs["axis"]
                     )
                     container.weight[:] = inv_var[expand]
                 else:
-                    variance = np.var(mocks.spectrum[:], axis=0)
+                    variance = np.var(_re(mocks.spectrum[:]), axis=0)
                     expand = tuple(
                         slice(None) if ax in axes else None
                         for ax in container.var.attrs["axis"]
@@ -270,7 +278,7 @@ def run_mcmc(
     # For the simulation template, we need to provide parameters to average the polarisations
     if model_name in SIMULATION_MODELS:
         if dset == "stack":
-            model_kwargs["weight"] = data.weight[:]
+            model_kwargs["weight"] = _re(data.weight[:])
         else:
             if ps2d_model:
                 # If our power spectrum model starts from 2d, take weights and signal_mask
@@ -281,7 +289,7 @@ def run_mcmc(
                     combine=combine_pol,
                     return_signal_mask=True,
                 )
-                model_kwargs["weight"] = weight_meas_2d
+                model_kwargs["weight"] = _re(weight_meas_2d)
                 model_kwargs["signal_mask"] = signal_mask_2d
 
                 model_kwargs["nbins"] = data.k1D.shape[-1]
@@ -299,8 +307,8 @@ def run_mcmc(
     )
 
     # Sort frequencies or k values, then determine which values to use in fit
-    isort = np.argsort(x_meas, axis=-1)
-    x = np.take_along_axis(x_meas, isort, axis=-1)
+    isort = np.argsort(_re(x_meas), axis=-1)
+    x = np.take_along_axis(_re(x_meas), isort, axis=-1)
     nx = x.shape[-1]
 
     if dset == "stack":
@@ -324,22 +332,22 @@ def run_mcmc(
         freq = np.mean(x, axis=0)
 
     # Sort data and weight arrays
-    data_meas = scale * np.take_along_axis(data_meas, isort, axis=-1)
-    weight_meas = np.take_along_axis(weight_meas, isort, axis=-1) / scale**2
+    data_meas = scale * np.take_along_axis(_re(data_meas), isort, axis=-1)
+    weight_meas = np.take_along_axis(_re(weight_meas), isort, axis=-1) / scale**2
     npol = len(pol)
 
     # Initialize array for mocks
     mock_meas, _, _, _ = utils.initialize_pol(
         mocks, pol=required_pol, combine=combine_pol
     )
-    mock_meas = scale * np.take_along_axis(mock_meas, isort[np.newaxis, ...], axis=-1)
+    mock_meas = scale * np.take_along_axis(_re(mock_meas), isort[np.newaxis, ...], axis=-1)
 
     # Initialize array for transfer function
     if transfer is not None:
         transfer_meas, _, _, _ = utils.initialize_pol(
             transfer, pol=required_pol, combine=combine_pol
         )
-        transfer_meas = np.take_along_axis(transfer_meas, isort, axis=-1)
+        transfer_meas = np.take_along_axis(_re(transfer_meas), isort, axis=-1)
 
     # Initialize array for template
     if template is not None:
@@ -347,7 +355,7 @@ def run_mcmc(
         template = utils.average_data(
             template, pol=required_pol, combine=combine_pol, sort=True
         )
-        template_meas = scale * template[dset][:]
+        template_meas = scale * _re(template[dset][:])
 
         if normalize_template:
             max_template = np.max(
@@ -364,7 +372,7 @@ def run_mcmc(
 
     # Prepare the model
     Model = getattr(models, model_name)
-    model = Model(seed=seed, **{**model_kwargs, **param_spec})
+    model = Model(seed=seed, force_real=force_real, **{**model_kwargs, **param_spec})
 
     param_name = model.param_name
     nparam = len(param_name)
@@ -617,6 +625,8 @@ class RunMCMC(task.SingleTask):
     model_kwargs = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
     flag_ind = config.list_type(type_=int)
+
+    force_real = config.Property(proptype=bool)
 
     def setup(self):
         """Prepare all arguments to the run_mcmc function."""
