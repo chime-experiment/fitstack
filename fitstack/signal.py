@@ -575,6 +575,10 @@ class AutoSignalTemplate2D:
         Number of 1d k bins. Default: 10.
     logbins : bool
         Whether bins should be log-spaced. Default: True.
+    force_real : bool
+        Force input datasets to be real. Assumes that input datasets have been previously 
+        examined to verify that imaginary parts are small and/or unimportant. 
+        Default: True.
     """
 
     def __init__(
@@ -584,6 +588,7 @@ class AutoSignalTemplate2D:
         aliases: Optional[Dict[str, str]] = None,
         nbins: int = 7,
         logbins: bool = True,
+        force_real: bool = True,
     ):
 
         if derivs is None:
@@ -596,6 +601,7 @@ class AutoSignalTemplate2D:
         self._aliases = aliases if aliases is not None else {}
         self._nbins = nbins
         self._logbins = logbins
+        self.force_real = force_real
         logger.debug(f"Using deriv modes: {self._derivs}")
         logger.debug(f"Using aliases: {self._aliases}")
         logger.debug(f"Using factor: {self._factor}")
@@ -603,6 +609,9 @@ class AutoSignalTemplate2D:
             f"Using {self._nbins} "
             f"{'log-spaced' if self._logbins else 'linearly-spaced'} bins"
         )
+
+    def _re(self, x):
+        return np.real(x) if self.force_real else x
 
     @classmethod
     def load_from_ps2Dfiles(
@@ -612,6 +621,7 @@ class AutoSignalTemplate2D:
         weight: np.ndarray = None,
         signal_mask: np.ndarray = None,
         combine: bool = True,
+        force_real: bool = True,
         **kwargs,
     ):
         """Load the signal template from a set of 2d power spectrum files.
@@ -639,6 +649,10 @@ class AutoSignalTemplate2D:
         combine
             Add an element to the polarisation axis called I that
             is the weighted sum of the XX and YY polarisation.
+        force_real
+            Force input datasets to be real. Assumes that input datasets have 
+            been previously examined to verify that imaginary parts are small 
+            and/or unimportant. Default: True.
         **kwargs
             Arguments passed on to the constructor.
         """
@@ -692,11 +706,12 @@ class AutoSignalTemplate2D:
 
             mocks = utils.load_mocks(ps2D_files, pol=pol)
             ps2Ds[key] = utils.average_data(
-                mocks, pol=mocks.pol, combine=combine, sort=False
+                mocks, pol=mocks.index_map["pol"], combine=combine, sort=False
             )
 
         # Create the object
         self = cls(**kwargs)
+        self.force_real = force_real
 
         # Save signal mask and ps2D weights, for later use in binning
         # 2d power spectrum to 1d
@@ -706,9 +721,9 @@ class AutoSignalTemplate2D:
             else next(iter(ps2Ds.values())).mask[:].copy()
         )
         self._ps2D_weight = (
-            weight
+            self._re(weight)
             if weight is not None
-            else next(iter(ps2Ds.values())).weight[:].copy()
+            else self._re(next(iter(ps2Ds.values())).weight[:].copy())
         )
 
         # Try and construct all the required templates from the stacks
@@ -752,9 +767,9 @@ class AutoSignalTemplate2D:
                 )
 
             return (
-                self._factor * ps2D.spectrum[:],
+                self._factor * self._re(ps2D.spectrum[:]),
                 self._factor**2
-                * tools.invert_no_zero(ps2D.attrs["num"] * ps2D.weight[:]),
+                * tools.invert_no_zero(ps2D.attrs["num"] * self._re(ps2D.weight[:])),
             )
 
         # For all linear component terms, load them and construct the various HI,v
@@ -901,7 +916,7 @@ class AutoSignalTemplate2D:
 
         for ipol in range(_signal_2D.shape[0]):
 
-            _, signal_1D[ipol], _, _ = get_1d_ps(
+            _, signal_1D[ipol], _, _, _ = get_1d_ps(
                 _signal_2D[ipol],
                 self._kperp,
                 self._kpara,
@@ -1035,12 +1050,13 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
 
         kpara2 = self.kpara[np.newaxis, :, np.newaxis] ** 2
 
-        ps2D_base = base.spectrum[:]
-        ps2D_deriv = deriv.spectrum[:]
+        # Take real parts of input spectra, so that output scale is also real
+        ps2D_base = self._re(base.spectrum[:])
+        ps2D_deriv = self._re(deriv.spectrum[:])
 
         # Get variance of base and deriv ps2D, for usage in error propagation
-        var_ps2D_base = tools.invert_no_zero(base.weight[:])
-        var_ps2D_deriv = tools.invert_no_zero(deriv.weight[:])
+        var_ps2D_base = tools.invert_no_zero(self._re(base.weight[:]))
+        var_ps2D_deriv = tools.invert_no_zero(self._re(deriv.weight[:]))
 
         # Compute ratio of base and deriv ps2D, and compute variance in ratio using
         # error propagation
