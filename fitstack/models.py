@@ -1131,9 +1131,6 @@ class AutoSimulationTemplate2Dto1D(Model):
             Model for the signal.
         """
 
-        if k1D is None:
-            k1D = self.k1D
-
         if pol_sel is None:
             pol_sel = self.pol_sel
 
