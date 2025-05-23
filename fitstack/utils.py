@@ -457,6 +457,8 @@ def average_data(cnt, pol=None, combine=True, sort=True):
         avg.spectrum[:] = np.mean(darr, axis=0)
         avg.kpara[:] = cnt.kpara[:]
         avg.kperp[:] = cnt.kperp[:]
+        avg.mask[:] = cnt.mask[:]
+        avg.neff[:] = cnt.neff[:]
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
