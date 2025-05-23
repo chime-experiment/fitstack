@@ -359,7 +359,7 @@ class ScaledShiftedTemplate(Model):
     }
 
     def model(self, theta, freq=None, transfer=None, template=None):
-        """Evaluate the model consisting of a scaled and shifted stacking template.
+        r"""Evaluate the model consisting of a scaled and shifted stacking template.
 
         .. math::
 
@@ -476,7 +476,7 @@ class Exponential(Model):
     }
 
     def model(self, theta, freq=None, transfer=None):
-        """Evaluate the exponential model.
+        r"""Evaluate the exponential model.
 
         .. math::
 
