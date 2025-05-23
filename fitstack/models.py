@@ -190,6 +190,21 @@ class Model(object):
 
         return -0.5 * np.matmul(residual.T, np.matmul(self.inv_cov, residual))
 
+    def negative_log_likelihood(self, theta):
+        """Evaluate the negative log of the likelihood.
+
+        Parameters
+        ----------
+        theta : list
+            Values for the fit parameters.
+
+        Returns
+        -------
+        nlogL : float
+            Negative logarithm of the likelihood function.
+        """
+        return -self.log_likelihood(theta)
+
     def log_probability(self, theta):
         """Evaluate log of the probability of observing the data given the parameters.
 
