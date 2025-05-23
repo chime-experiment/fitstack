@@ -347,6 +347,30 @@ class Model(object):
         return 0.0
 
 
+class NullModel(Model):
+    """Model that just returns zero.
+
+    Intended for assessing a zero-signal null hypothesis.
+    """
+
+    param_name = []
+
+    def model(self, theta):
+        """Evaluate model.
+
+        Parameters
+        ----------
+        theta : array_like
+            Array of input parameters (unused).
+
+        Returns
+        -------
+        model : float
+            Null model value (zero).
+        """
+        return 0.
+
+
 class ScaledShiftedTemplate(Model):
     """Scaled and shifted stacking template model."""
 
