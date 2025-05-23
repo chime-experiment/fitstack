@@ -387,7 +387,7 @@ class SignalTemplateFoG(SignalTemplate):
     def _solve_scale(
         self, base: FrequencyStackByPol, deriv: FrequencyStackByPol, alpha: float
     ) -> np.ndarray:
-        """Solve for the effective scale of the FoG damping.
+        r"""Solve for the effective scale of the FoG damping.
 
         Note that the scale parameter returned by this function is different from
         the scale parameter defined in the eBOSS stacking paper: if :math:`s` is the
@@ -1017,7 +1017,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
     def _solve_scale(
         self, base: PowerSpectrum2D, deriv: PowerSpectrum2D, alpha: float
     ) -> np.ndarray:
-        """Solve for the effective scale of the FoG damping.
+        r"""Solve for the effective scale of the FoG damping.
 
         Note that the scale parameter returned by this function is different from
         the scale parameter defined in the eBOSS stacking paper: if :math:`s` is the
