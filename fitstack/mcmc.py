@@ -283,11 +283,11 @@ def run_mcmc(
             if ps2d_model:
                 # If our power spectrum model starts from 2d, take weights and signal_mask
                 # from data_2d
-                _, weight_meas_2d, _, _, signal_mask_2d = utils.initialize_pol(
+                _, weight_meas_2d, _, _, signal_mask_2d, _ = utils.initialize_pol(
                     data_2d,
                     pol=required_pol,
                     combine=combine_pol,
-                    return_signal_mask=True,
+                    return_signal_mask_and_neff=True,
                 )
                 model_kwargs["weight"] = _re(weight_meas_2d)
                 model_kwargs["signal_mask"] = signal_mask_2d

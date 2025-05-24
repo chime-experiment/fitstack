@@ -187,17 +187,24 @@ def combine_pol(cnt):
 
     Returns
     -------
-    z : np.ndarray
-        The weighted sum of the relevant dataset for the XX and YY polarisations.
-    wz : np.ndarray
-        The sum of the weights for the XX and YY polarisations.
-    x : np.ndarray
-        The weighted average of the independent coordinate (frequency lag, k,
-        or dict with kpara and kperp keys) for the XX and YY polarisations.
+    output : dict
+        Dictionary with the following keys:
+        - "z": Weighted sum of the relevant dataset for the XX and YY 
+           polarisations.
+        - "wz": The sum of the weights for the XX and YY polarisations.
+        - "x": The weighted average of the independent coordinate (frequency 
+          lag, k, or dict with kpara and kperp keys) for the XX and YY 
+          polarisations.
+        In addition, if the input is a PowerSpectrum2D container, the dict
+        also contains:
+        - "mask": Boolean AND of mask for XX and YY.
+        - "neff": Effective number of modes for XX+YY weighted sum.
     """
 
     _dset_name = {"stack": "stack", "ps2D": "spectrum", "ps1D": "spectrum"}
 
+    # Determine data type, names of co-pol combinations, and whether input
+    # container contains mocks
     if isinstance(cnt, containers.FrequencyStackByPol):
         data_type = "stack"
         copol_names = ["XX", "YY"]
@@ -211,6 +218,7 @@ def combine_pol(cnt):
             data_type = "ps1D"
             is_mock_cont = isinstance(cnt, containers.MockPowerSpectrum1D)
 
+    # Get list of pol names in input container
     pol = list(cnt.index_map["pol"])
 
     # If operating on power spectra, check that ordering of k-bin centers is
@@ -226,15 +234,19 @@ def combine_pol(cnt):
                 "for different polarizations, so can't combine"
             )
 
+    # Get input data dataset
     y = cnt[_dset_name[data_type]]
 
+    # Get input weights
     if (data_type == "stack") | (data_type == "ps2D"):
         w = cnt["weight"][:]
     else:
         w = tools.invert_no_zero(cnt["var"][:])
 
+    # Get index of pol axis in data dataset
     ax = list(cnt[_dset_name[data_type]].attrs["axis"]).index("pol")
 
+    # Set input weights to zero, except for desired co-pol elements
     flag = np.zeros_like(w)
     for pstr in copol_names:
         pp = pol.index(pstr)
@@ -243,16 +255,38 @@ def combine_pol(cnt):
 
     w = flag * w
 
-    wz = np.sum(w, axis=ax)
+    output = {}
 
+    # Get sum of weights across pols, and weighted sum of data across pols
+    wz = np.sum(w, axis=ax)
     z = np.sum(w * y, axis=ax) * tools.invert_no_zero(wz)
 
+    # Compute coordinates (freq/k) and other ancillary datasets for 
+    # averaged data
     if data_type == "stack":
         # Frequencies are identical for XX and YY, so no average needed
         x = cnt.freq
+
     elif data_type == "ps2D":
-        # k_par and k_perp are identical for XX and YY, so no average needed here either
+        # k_par and k_perp are identical for XX and YY, so no average needed 
+        # here either
         x = {"kpara": cnt.kpara, "kperp": cnt.kperp}
+
+        # Compute effective number of modes
+        neff = cnt["neff"][:]
+        output["neff"] = wz**2 * tools.invert_no_zero(
+            np.sum(w**2 * tools.invert_no_zero(neff), axis=ax)
+        )
+
+        # Compute boolean AND of mask across co-pol elements.
+        # Mask has different shape than data/weights, so we need to
+        # determine the pol axis again
+        mask = cnt["mask"][:]
+        ax = list(cnt["mask"].attrs["axis"]).index("pol")
+        ipol = np.array([pol.index(pstr) for pstr in copol_names])
+        slc = (slice(None),) * ax + (ipol,)
+        mask = mask[slc]
+        output["mask"] = np.all(mask, axis=ax)
     else:
         x = cnt.k1D[:]
         if is_mock_cont:
@@ -268,10 +302,12 @@ def combine_pol(cnt):
         else:
             x = np.sum(w * x, axis=ax) * tools.invert_no_zero(wz)
 
-    return z, wz, x
+    output["z"], output["wz"], output["x"] = z, wz, x
+
+    return output
 
 
-def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
+def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=False):
     """Select the data for the desired polarisations.
 
     Parameters
@@ -285,9 +321,9 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
     combine : bool
         Add an element to the polarisation axis that is
         the weighted sum of XX and YY.
-    return_signal_mask : bool
-        Also return signal_mask for 2d power spectrum.
-        Ignored if input container is not Powerspec2D.
+    return_signal_mask_and_neff : bool
+        Also return mask and neff for 2d power spectrum.
+        Ignored if input container is not PowerSpectrum2D.
         Default: False.
 
     Returns
@@ -327,22 +363,42 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
         else:
             data_type = "ps1D"
 
+    # Get indices of requested polarizations in pol axis of input container
     cpol = list(cnt.index_map["pol"])
     ipol = np.array([cpol.index(pstr) for pstr in pol])
-
     num_cpol = ipol.size
 
+    # Set number of output pols (input+1 if adding combined pol)
     num_pol = num_cpol + int(combine)
 
+    # Determine name of dataset with data
     if isinstance(cnt, containers.FrequencyStackByPol):
         dset = "stack"
     else:
         dset = "spectrum"
 
+    # Get index of pol axis in input data dataset, then make shape of
+    # output data dataset, adjusting pol axis length if adding combined
+    # pol
     ax = list(cnt[dset].attrs["axis"]).index("pol")
     shp = list(cnt[dset].shape)
     shp[ax] = num_pol
 
+    # If input is MockContainer, some datasets (e.g. mask for PowerSpectrum2D) 
+    # will not have a mock axis, so the shapes of these datasets in the 
+    # output container will not be the same as the data dataset. So, 
+    # we need to separately track the pol axis and output dataset shape 
+    # for these containers.
+    if isinstance(cnt, containers.MockContainer):
+        nomock_dset = cnt.non_mock_datasets[0]
+        ax_nomock = list(cnt[nomock_dset].attrs["axis"]).index("pol")
+        shp_nomock = list(cnt[nomock_dset].shape)
+        shp_nomock[ax_nomock] = num_pol
+    else:
+        ax_nomock = ax
+        shp_nomock = shp
+
+    # Make arrays for output data, weight, and coordinate datasets
     data = np.zeros(shp, dtype=cnt[dset].dtype)
     weight = np.zeros(shp, dtype=cnt[dset].dtype)
     if data_type != "ps2D":
@@ -355,15 +411,22 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
             ),
         }
 
+    # Make slices for transferring desired pols in datasets from 
+    # input to output container
     slc_in = (slice(None),) * ax + (ipol,)
     slc_out = (slice(None),) * ax + (slice(0, num_cpol),)
+    slc_in_nomock = (slice(None),) * ax_nomock + (ipol,)
+    slc_out_nomock = (slice(None),) * ax_nomock + (slice(0, num_cpol),)
 
+    # Transfer data and weights
     data[slc_out] = cnt[dset][slc_in]
     if (data_type == "stack") | (data_type == "ps2D"):
         weight[slc_out] = cnt["weight"][slc_in]
     else:
         weight[slc_out] = tools.invert_no_zero(cnt.datasets["var"][slc_in])
 
+    # Transfer coordinates.
+    # These are handled separately from "non-mock" datasets
     if data_type == "stack":
         x[slc_out] = cnt.freq[..., :]
     elif data_type == "ps2D":
@@ -372,27 +435,39 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask=False):
     else:
         x[slc_out] = cnt.k1D[:]
 
-    if data_type == "ps2D" and return_signal_mask:
-        signal_mask = np.zeros(shp, dtype=cnt.mask.dtype)
-        signal_mask[slc_out] = cnt.mask[slc_in]
+    # If we want the extra datasets in PowerSpectrum2D,
+    # take appropriate slices of input mask and neff
+    if data_type == "ps2D" and return_signal_mask_and_neff:
+        neff = np.zeros(shp, dtype=cnt.neff.dtype)
+        neff[slc_out] = cnt.neff[slc_in]
+
+        signal_mask = np.zeros(shp_nomock, dtype=cnt.mask.dtype)
+        signal_mask[slc_out_nomock] = cnt.mask[slc_in_nomock]
+
 
     if combine:
+        # Make slices that select combined pol in outputs
         old_slc_out = slc_out
+        old_slc_out_nomock = slc_out_nomock
         slc_out = (slice(None),) * ax + (-1,)
-        temp, wtemp, xtemp = combine_pol(cnt)
+        slc_out_nomock = (slice(None),) * ax_nomock + (-1,)
+        # Compute data, weights, coords for combined pol
+        cp_calc = combine_pol(cnt)
+        temp, wtemp, xtemp = cp_calc["z"], cp_calc["wz"], cp_calc["x"]
         data[slc_out] = temp
         weight[slc_out] = wtemp
+        # Transfer coords (and mask+neff, for PowerSpectrum2D)
         if data_type == "ps2D":
             x["kpara"][slc_out] = xtemp["kpara"]
             x["kperp"][slc_out] = xtemp["kperp"]
-            if return_signal_mask:
-                signal_mask[slc_out] = np.all(signal_mask[old_slc_out], axis=ax)
+            signal_mask[slc_out_nomock] = cp_calc["mask"]
+            neff[slc_out] = cp_calc["neff"]
         else:
             x[slc_out] = xtemp
         cpol.append("I")
 
-    if return_signal_mask:
-        return data, weight, cpol, x, signal_mask
+    if data_type == "ps2D" and return_signal_mask_and_neff:
+        return data, weight, cpol, x, signal_mask, neff
     else:
         return data, weight, cpol, x
 
@@ -427,7 +502,14 @@ def average_data(cnt, pol=None, combine=True, sort=True):
         inverse variance (2d).
     """
 
-    darr, _, dpol, dx = initialize_pol(cnt, pol=pol, combine=combine)
+    if isinstance(cnt, containers.MockPowerSpectrum2D):
+        darr, _, dpol, dx, dmask, dneff = initialize_pol(
+            cnt, pol=pol, combine=combine, return_signal_mask_and_neff=True
+        )
+    else:
+        darr, _, dpol, dx = initialize_pol(
+            cnt, pol=pol, combine=combine, return_signal_mask_and_neff=False
+        )
     ndata = darr.shape[0]
 
     # freq/k should always be real
@@ -457,8 +539,8 @@ def average_data(cnt, pol=None, combine=True, sort=True):
         avg.spectrum[:] = np.mean(darr, axis=0)
         avg.kpara[:] = cnt.kpara[:]
         avg.kperp[:] = cnt.kperp[:]
-        avg.mask[:] = cnt.mask[:]
-        avg.neff[:] = cnt.neff[:]
+        avg.mask[:] = dmask
+        avg.neff[:] = dneff
 
         if darr.shape[0] == 1:
             # Set weights to unity for single mock
