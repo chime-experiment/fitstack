@@ -14,6 +14,21 @@ from draco.core.containers import (
 )
 
 
+class MockContainer(ContainerBase):
+    """Container where some datasets have a mock axis and others do not."""
+
+    _non_mock_datasets = ()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attrs["non_mock_datasets"] = self._non_mock_datasets
+
+    @property
+    def non_mock_datasets(self):
+        """Get the list of datasets without a mock axis."""
+        return self.attrs["non_mock_datasets"]
+
+
 class StackSet1D(FrequencyStackByPol):
     """Container for all data required to perform a model fit to a 1D stack."""
 
@@ -89,7 +104,7 @@ class PowerSpectrumSet1D(PowerSpectrum1D):
     }
 
 
-class MockPowerSpectrum1D(PowerSpectrum1D):
+class MockPowerSpectrum1D(PowerSpectrum1D, MockContainer):
     """Container for multiple 1d power spectra.
 
     This will most commonly be used to store several noise power spectra,
@@ -104,6 +119,8 @@ class MockPowerSpectrum1D(PowerSpectrum1D):
     """
 
     _axes = ("mock",)
+
+    _non_mock_datasets = ("neff",)
 
     _dataset_spec: ClassVar = {
         "spectrum": {
@@ -139,20 +156,22 @@ class MockPowerSpectrum1D(PowerSpectrum1D):
     }
 
 
-class MockPowerSpectrum2D(PowerSpectrum2D):
+class MockPowerSpectrum2D(PowerSpectrum2D, MockContainer):
     """Container for multiple 2d power spectra.
 
     This will most commonly be used to store several noise power spectra,
     for use in computing a covariance matrix. The spectra will be indexed
     by the `mock` axis, to carry over conventions from the stacking analysis.
 
-    The `spectrum` dataset will vary from mock to mock. `weight` may be
-    the same for every mock, but we allow for it to vary. The other 
-    `PowerSpectrum2D` datasets (`neff`, `mask`) will be the same for every 
-    mock, so we don't redefine them in this container.
+    The `spectrum` dataset will vary from mock to mock. `weight` and `neff`
+    may be the same for every mock, but we allow for them to vary. `mask` 
+    will be the same for every mock, so we only redefine it so that it's
+    not distributed by default.
     """
 
     _axes = ("mock",)
+
+    _non_mock_datasets = ("mask",)
 
     _dataset_spec: ClassVar = {
         "spectrum": {
@@ -168,7 +187,7 @@ class MockPowerSpectrum2D(PowerSpectrum2D):
             "distributed": False,
         },
         "neff": {
-            "axes": ["pol", "delay", "uv_dist"],
+            "axes": ["mock", "pol", "delay", "uv_dist"],
             "dtype": np.float64,
             "initialise": True,
             "distributed": False,
