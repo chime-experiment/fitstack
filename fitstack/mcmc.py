@@ -52,6 +52,7 @@ def run_mcmc(
     transfer=None,
     template=None,
     pol_fit="joint",
+    pol_stokes=False,
     model_name="Exponential",
     scale=1e6,
     nwalker=32,
@@ -103,10 +104,15 @@ def run_mcmc(
         FrequencyStackByPol or PowerSpectrum1D container, or the name of 
         a file that holds such a container and will be loaded from disk.
         Note that not all models require templates.  Default is None.
-    pol_fit : {"XX"|"YY"|"I"|"joint"}
+    pol_fit : {"XX"|"YY"|"I"|"Q"|"joint"}
         Polarisation to fit.  Here "I" refers to the weighted sum of the
-         "XX" and "YY" polarisations and "joint" refers to a simultaneous
-        fit to the "XX" and "YY" polarisations.
+        "XX" and "YY" polarisations for stacking measurements and the
+        unweighted sum of "XX" and "YY" for power spectrum measurements.
+        "joint" refers to a simultaneous fit to the "XX" and "YY" or "I" 
+        and "Q" polarisations.
+    pol_stokes : bool
+        If True, assume that all input files contain Stokes parameters 
+        instead of instrumental polarisations. Default: False.
     model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
                   "SimulationTemplate"|"SimulationTemplateFoG"|
                   "SimulationTemplateFoGAltParam"|"AutoConstant"|
@@ -174,6 +180,7 @@ def run_mcmc(
         precision matrix inferred from the mocks.
     """
 
+    # Function to take real part if force_real is set
     def _re(x):
         return np.real(x) if force_real else x
 
@@ -181,15 +188,18 @@ def run_mcmc(
     # for power spectra. Internally, we always use XX, YY, but we
     # need to map these to the relevant strings depending on the input
     # data.
+    _stacking_polname = {"XX": "XX", "YY": "YY", "I": "I"}
+    _ps_polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I-I", "Q": "Q-Q"}
+
     if isinstance(data, str):
         with h5py.File(utils.find_file(data), "r") as handler:
             container_type = handler.attrs["__memh5_subclass"]
             if container_type == "draco.core.containers.FrequencyStackByPol":
-                polname = {"XX": "XX", "YY": "YY", "I": "I"}
+                polname = _stacking_polname
             elif container_type in [
                 "draco.core.containers.PowerSpectrum2D", "draco.core.containers.PowerSpectrum1D"
             ]:
-                polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I"}
+                polname = _ps_polname
             else:
                 raise RuntimeError(
                     f"Container type of data argument ({container_type})"
@@ -197,13 +207,16 @@ def run_mcmc(
                 )
     else:
         if isinstance(data, containers.FrequencyStackByPol):
-            polname = {"XX": "XX", "YY": "YY", "I": "I"}
+            polname = _stacking_polname
         else:
-            polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I"}
+            polname = _ps_polname
 
-
-    required_pol = [polname["XX"], polname["YY"]]
-    combine_pol = True
+    if pol_stokes:
+        required_pol = [polname["I"], polname["Q"]]
+        combine_pol = False
+    else:
+        required_pol = [polname["XX"], polname["YY"]]
+        combine_pol = True
 
     if param_spec is None:
         param_spec = {}
@@ -382,7 +395,7 @@ def run_mcmc(
     cov = utils.unravel_covariance(cov_flat, npol, nx)
 
     # Determine the polarisation to fit
-    if pol_fit in ["XX", "YY", "I"]:
+    if pol_fit in polname.keys():
         ipol = pol.index(polname[pol_fit])
         npol_fit = 1
 
@@ -390,7 +403,10 @@ def run_mcmc(
         ifit = x_1d_index
 
     elif pol_fit == "joint":
-        ipol = np.array([pol.index(pstr) for pstr in [polname["XX"], polname["YY"]]])
+        if pol_stokes:
+            ipol = np.array([pol.index(pstr) for pstr in [polname["I"], polname["Q"]]])
+        else:
+            ipol = np.array([pol.index(pstr) for pstr in [polname["XX"], polname["YY"]]])
         npol_fit = len(ipol)
 
         C = utils.ravel_covariance(cov[ipol][:, ipol])
@@ -399,7 +415,7 @@ def run_mcmc(
     else:
         raise ValueError(
             f"Do not recognize polarisation {pol_fit} "
-            "(possible values are 'XX', 'YY', 'I' or 'joint')"
+            "(possible values are 'XX', 'YY', 'I', 'Q', or 'joint')"
         )
 
     # Apply extra flagging if specified
@@ -607,6 +623,7 @@ class RunMCMC(task.SingleTask):
     template = config.Property(proptype=_list_or_glob)
 
     pol_fit = config.Property(proptype=str)
+    pol_stokes = config.Property(proptype=bool)
     model_name = config.Property(proptype=str)
     scale = config.Property(proptype=float)
 
