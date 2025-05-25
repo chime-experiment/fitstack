@@ -350,6 +350,11 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
 
     _dset_name = {"stack": "stack", "ps2D": "spectrum", "ps1D": "spectrum"}
 
+    if combine and ("I" in pol or "Q" in pol):
+        raise RuntimeError(
+            "Cannot combine polarizations if Stokes parameters provided"
+        )
+
     if isinstance(cnt, containers.FrequencyStackByPol):
         data_type = "stack"
         if pol is None:
