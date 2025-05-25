@@ -574,6 +574,11 @@ def run_mcmc(
 
     # Discard burn in and thin the chains
     flat_samples = results.samples(flat=True)
+    if len(flat_samples) == 0:
+        raise RuntimeError(
+            "After thinning and burn-in removal, chain has no samples remaining!\n"
+            "Re-run with larger number of samples."
+        )
 
     # Compute percentiles of the posterior distribution
     q = np.percentile(flat_samples, PERCENTILE, axis=0).T
