@@ -672,7 +672,7 @@ class AutoSignalTemplate2D:
         # Find directories which match the right format
         for d in sorted(dirs):
             ###mo = re.search(r"_compderiv-([^\/]+)", d)
-            mo_comp = re.search(r"bias_([0-9\.]+)_Pk_([^_]+)", d)
+            mo_comp = re.search(r"bias_([0-9\.]+)_Pk_([^_]+)/", d)
             # Check for shotnoise directory
             mo_shotnoise = re.search(r"template_shotnoise", d)
 
