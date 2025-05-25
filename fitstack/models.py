@@ -1073,6 +1073,7 @@ class AutoSimulationTemplate2Dto1D(Model):
     def __init__(
         self,
         pattern,
+        filename_pattern=None,
         pol=None,
         weight=None,
         signal_mask=None,
@@ -1098,6 +1099,7 @@ class AutoSimulationTemplate2Dto1D(Model):
 
         self._signal_template = self._template_class.load_from_ps2Dfiles(
             pattern,
+            filename_pattern=filename_pattern,
             pol=pol,
             weight=weight,
             signal_mask=signal_mask,

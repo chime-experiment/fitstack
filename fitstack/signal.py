@@ -617,6 +617,7 @@ class AutoSignalTemplate2D:
     def load_from_ps2Dfiles(
         cls,
         pattern: str,
+        filename_pattern: str = None,
         pol: List[str] = None,
         weight: np.ndarray = None,
         signal_mask: np.ndarray = None,
@@ -637,7 +638,11 @@ class AutoSignalTemplate2D:
         Parameters
         ----------
         pattern
-            A glob pattern that isolates the base signal templates.
+            A glob pattern that isolates the directories containing the base
+            signal templates.
+        filename_pattern
+            A glob pattern that specifies the filenames containing the base
+            signal templates.
         pol
             The desired polarisations.
         weight
@@ -658,6 +663,9 @@ class AutoSignalTemplate2D:
         """
 
         dirs = glob.glob(pattern)
+
+        if filename_pattern is None:
+            filename_pattern = "*.h5"
 
         matching = {}
 
@@ -691,14 +699,16 @@ class AutoSignalTemplate2D:
             d = Path(d)
 
             if not d.is_dir():
-                raise ValueError("Glob must point to directories")
+                raise ValueError(
+                    "Glob pattern for templates must point to directories"
+                )
 
             matching[key] = Path(d)
 
         # For each directory load all the ps2D files and combine them
         ps2Ds = {}
         for key, d in matching.items():
-            ps2D_files = sorted(list(d.glob("*.h5")))
+            ps2D_files = sorted(list(d.glob(filename_pattern)))
 
             if len(ps2D_files) == 0:
                 print("No files found at matching path.")
