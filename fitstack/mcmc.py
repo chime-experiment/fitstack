@@ -466,6 +466,7 @@ def run_mcmc(
         )
         results["var"][:] = tools.invert_no_zero(weight_meas)
         results["k_flag"][:] = x_1d_flag
+        results["k1D"][:] = x
 
     results.attrs["seed"] = str(model.seed)
     results.attrs["model"] = model_name
