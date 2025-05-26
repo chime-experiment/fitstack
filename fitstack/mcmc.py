@@ -533,6 +533,10 @@ def run_mcmc(
         fit_kwargs["pol_sel"] = ipol
         eval_kwargs["pol_sel"] = slice(None)
 
+    # Save model_kwargs and param_spec to results container for later reference
+    results.attrs["model_kwargs"] = model_kwargs
+    results.attrs["param_spec"] = param_spec
+
     model.set_data(**fit_kwargs)
 
     # Determine starting point for chains in parameter space
