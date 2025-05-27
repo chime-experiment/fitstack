@@ -1183,3 +1183,108 @@ class AutoSimulationTemplate2Dto1DFoG(AutoSimulationTemplate2Dto1D):
         "convolutions",
         "kpara_range",
     )
+
+
+class AutoSimulationTemplate2Dto1D_Omega2(AutoSimulationTemplate2Dto1D):
+    """Version of AutoSimulationTemplate2Dto1D that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "M_10"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -25.0,
+                "high": 25.0,
+            },
+        }
+    }
+
+    _template_class = signal.AutoSignalTemplate2D
+    _template_kwargs = ()
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[5]
+            Parameter values, ordered as ["omega^2", "b_HI", "NL", "FoGh", "M_10"].
+        k1D : np.ndarray[npol,nk]
+            K values for each pol. (Not actually used in model evaluation.)
+        template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        omega2 = param_dict.pop("omega^2")
+        # Need to allow omega to be complex so that omega^2 can be negative
+        # when model is evaluated
+        param_dict["omega"] = (omega2 + 1.j)**0.5
+
+        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+
+        return model
+
+
+class AutoSimulationTemplate2Dto1DFoG_Omega2(AutoSimulationTemplate2Dto1D_Omega2):
+    """Version of AutoSimulationTemplate2Dto1DFoG that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "M_10"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -25.0,
+                "high": 25.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate2DFoG
+    _template_kwargs = AutoSimulationTemplate2Dto1D._template_kwargs + (
+        "convolutions",
+        "kpara_range",
+    )
