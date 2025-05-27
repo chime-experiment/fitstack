@@ -881,8 +881,11 @@ class AutoSignalTemplate2D:
         # before adding in the non-component contributions
         signal = self.multiply_pre_noncomp(signal, **kwargs)
 
-        # Scale by the overall prefactor (omega**2 for auto-correlation)
-        signal *= omega**2
+        # Scale by the overall prefactor (omega**2 for auto-correlation).
+        # If we sampled directly in omega^2, this omega may be complex,
+        # so we need to take the real part here to avoid having omega**2
+        # evaluate as a compex number with zero imaginary part.
+        signal *= np.real(omega**2)
 
         # Add in any non-component contributions
         for name, ps2D in self._ps2D_noncomp.items():
