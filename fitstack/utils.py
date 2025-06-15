@@ -603,7 +603,7 @@ def load_pol(filename, pol=None):
         "draco.core.containers.PowerSpectrum2D", 
         "draco.core.containers.MockPowerSpectrum2D", 
         "draco.core.containers.PowerSpectrum1D",
-        "draco.core.containers.MockPowerSpectrum1D",
+        "fitstack.containers.MockPowerSpectrum1D",
     ]:
         if pol is None:
             pol = ["XX-XX", "YY-YY"]
