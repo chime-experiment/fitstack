@@ -602,6 +602,7 @@ class AutoSignalTemplate2D:
         self._nbins = nbins
         self._logbins = logbins
         self.force_real = force_real
+        self._mcmc_binning_cache = None        
         logger.debug(f"Using deriv modes: {self._derivs}")
         logger.debug(f"Using aliases: {self._aliases}")
         logger.debug(f"Using factor: {self._factor}")
@@ -612,6 +613,52 @@ class AutoSignalTemplate2D:
 
     def _re(self, x):
         return np.real(x) if self.force_real else x
+    
+    def _cache_mcmc_binning(self):
+        """Cache quantities needed for binning 2d power spectrum to 1d."""
+        cache = {}
+    
+        for ipol in range(self._signal_mask.shape[0]):
+            kpp, kll = np.meshgrid(self._kperp, self._kpara) 
+            k = np.sqrt(kpp**2 + kll**2)
+        
+            # Apply signal window if present
+            if self._signal_mask is not None:
+                k = k[self._signal_mask[ipol]]
+                weight = self._ps2D_weight[ipol][self._signal_mask[ipol]] 
+
+        
+            # Flatten arrays
+            k1D = k.flatten()
+            w1D = weight.flatten()  
+        
+            # Calculate bin edges
+            kmin = k1D[k1D > 0].min()
+            kmax = k1D.max()
+        
+            if self._logbins:
+                kbins = np.logspace(np.log10(kmin), np.log10(kmax), self._nbins + 1)
+            else:
+                kbins = np.linspace(kmin, kmax, self._nbins + 1)
+        
+            indices = np.digitize(k1D, kbins)
+        
+            # Pre-compute weight sums for each bin 
+            w_sums = np.zeros(self._nbins)
+            for i in np.arange(len(kbins) -1) +1:
+                w_b = w1D[indices == i]
+                w_sums[i-1] = np.sum(w_b)
+
+        
+            cache[ipol] = {
+                'indices': indices,
+                'kbins': kbins,
+                'w1D': w1D,           
+                'w_sums': w_sums      
+            }
+    
+        self._mcmc_binning_cache = cache
+        logger.debug("MCMC binning calculations cached")    
 
     @classmethod
     def load_from_ps2Dfiles(
@@ -904,8 +951,12 @@ class AutoSignalTemplate2D:
 
         return signal
 
-    def signal_1D(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
+    def signal_1D_slow(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
         """Return the 1D power spectrum template, binned from 2D template.
+
+        Uses `get_1d_ps` from `draco.analysis.powerspec`, which re-calculates
+        several quantities that don't change if model parameters are changed, and
+        is therefore slower than the cached implementation in `signal_1d`.
 
         Parameters
         ----------
@@ -940,6 +991,53 @@ class AutoSignalTemplate2D:
             )
 
         return signal_1D
+    
+    def signal_1D(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
+        """Return the 1D power spectrum template with cached binning schemes.
+    
+            Parameters
+        ----------
+        omega
+            Overall scaling.
+        b_HI
+            Scaling for the HI bias term.
+        **kwargs
+            Values for all other derivative terms (e.g. NL) and non-component terms
+            (e.g. shotnoise).
+
+        Returns
+        -------
+        signal
+            Signal template for the given parameters. An array of [pol, k].
+        """
+    
+        _signal_2D = self.signal_2D(omega=omega, b_HI=b_HI, **kwargs)
+        signal_1D = np.zeros((_signal_2D.shape[0], self._nbins))
+    
+        if self._mcmc_binning_cache is None:
+            self._cache_mcmc_binning()
+    
+        for ipol in range(_signal_2D.shape[0]):
+            cache = self._mcmc_binning_cache[ipol]
+            indices = cache['indices']
+            w1D = cache['w1D']
+            w_sums = cache['w_sums']
+        
+            if self._signal_mask is not None:
+                p1D = _signal_2D[ipol][self._signal_mask[ipol]].flatten()
+            else:
+                p1D = _signal_2D[ipol].flatten()
+        
+            # Compute binned power spectrum using cached values
+            with np.errstate(divide="ignore", invalid="ignore"):
+                for i in np.arange(len(cache['kbins']) - 1) + 1:
+                    bin_mask = indices == i
+                    p = np.sum(w1D[bin_mask] * p1D[bin_mask])/w_sums[i-1]
+                    signal_1D[ipol, i-1] = p
+
+    
+        return signal_1D    
+
 
     def multiply_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
         """Override in subclass to multiply signal by function pre-non-components."""
