@@ -164,7 +164,7 @@ class MockPowerSpectrum2D(PowerSpectrum2D, MockContainer):
     by the `mock` axis, to carry over conventions from the stacking analysis.
 
     The `spectrum` dataset will vary from mock to mock. `weight` and `neff`
-    may be the same for every mock, but we allow for them to vary. `mask` 
+    may be the same for every mock, but we allow for them to vary. `mask`
     will be the same for every mock, so we only redefine it so that it's
     not distributed by default.
     """
@@ -464,3 +464,48 @@ class MCMCFitPowerSpectrum1D(MCMCFit, PowerSpectrumSet1D):
     def ndof(self):
         """Return the number of degrees of freedom."""
         return np.sum(self.datasets["flag"][:]) - self.index_map["param"].size
+
+
+class ChisqPowerSpectrum1D(ContainerBase):
+    """Container for best-fit chi-squared results for 1d power spectrum."""
+
+    _axes = ("mock", "param", "pol", "k")
+
+    _dataset_spec = {
+        "success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "chisq_null": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "chisq_signal": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "bestfit_param": {
+            "axes": ["mock", "param"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "mock_bestfit_models": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialize": False,
+            "distributed": False,
+        },
+        "data_bestfit_model": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialize": False,
+            "distributed": False,
+        },
+    }
