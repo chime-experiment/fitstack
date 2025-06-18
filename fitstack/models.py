@@ -1084,6 +1084,7 @@ class AutoSimulationTemplate2Dto1D(Model):
         aliases=None,
         nbins=10,
         logbins=True,
+        slow_1d_binning=False,
         *args,
         **kwargs,
     ):
@@ -1096,6 +1097,8 @@ class AutoSimulationTemplate2Dto1D(Model):
 
         if aliases is None:
             aliases = {"shotnoise": "M_10", "lin": "NL"}
+
+        self.slow_1d_binning = slow_1d_binning
 
         self._signal_template = self._template_class.load_from_ps2Dfiles(
             pattern,
@@ -1138,7 +1141,10 @@ class AutoSimulationTemplate2Dto1D(Model):
 
         param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
-        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+        if self.slow_1d_binning:
+            model = self._signal_template.signal_1D_slow(**param_dict)[pol_sel]
+        else:
+            model = self._signal_template.signal_1D(**param_dict)[pol_sel]
 
         return model
 
@@ -1239,7 +1245,10 @@ class AutoSimulationTemplate2Dto1D_Omega2(AutoSimulationTemplate2Dto1D):
         # when model is evaluated
         param_dict["omega"] = (omega2 + 1.j)**0.5
 
-        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+        if self.slow_1d_binning:
+            model = self._signal_template.signal_1D_slow(**param_dict)[pol_sel]
+        else:
+            model = self._signal_template.signal_1D(**param_dict)[pol_sel]
 
         return model
 
