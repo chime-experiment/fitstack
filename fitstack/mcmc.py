@@ -76,20 +76,20 @@ def run_mcmc(
     ----------
     data : FrequencyStackByPol, PowerSpectrum1D, or str
         Measurements of stacking or power spectrum.
-        This can either be a FrequencyStackByPol or PowerSpectrum1D 
-        container, or the name of a file that holds such a container 
+        This can either be a FrequencyStackByPol or PowerSpectrum1D
+        container, or the name of a file that holds such a container
         and will be loaded from disk.
     mocks : container, list of containers, str, or list of str
         Mocks for estimating a noise covariance.
-        This can either be a MockFrequencyStackByPol or 
-        MockPowerSpectrum1D container, a list of FrequencyStackByPol or 
+        This can either be a MockFrequencyStackByPol or
+        MockPowerSpectrum1D container, a list of FrequencyStackByPol or
         PowerSpectrum1D containers, or the name of a file or a list of
         filenames that hold such containers and will be loaded from disk.
     data_2d : PowerSpectrum2D or str
-        Measurements of 2d power spectrum, either as a PowerSpectrum2D 
-        container or filename. When fitting to 1d power spectrum 
-        measurements with a model that starts in 2d, weights and 
-        (kpara,kperp) masking will be taken from here. Ignored if not 
+        Measurements of 2d power spectrum, either as a PowerSpectrum2D
+        container or filename. When fitting to 1d power spectrum
+        measurements with a model that starts in 2d, weights and
+        (kpara,kperp) masking will be taken from here. Ignored if not
         needed.
     transfer : FrequencyStackByPol or str
         The transfer function of the pipeline (only implemented for stacking).
@@ -101,17 +101,17 @@ def run_mcmc(
         If None, then a transfer function is not applied.  Default is None.
     template : FrequencyStackByPol, PowerSpectrum1D, or str
         Template for the stacked signal.  This can either be a
-        FrequencyStackByPol or PowerSpectrum1D container, or the name of 
+        FrequencyStackByPol or PowerSpectrum1D container, or the name of
         a file that holds such a container and will be loaded from disk.
         Note that not all models require templates.  Default is None.
     pol_fit : {"XX"|"YY"|"I"|"Q"|"joint"}
         Polarisation to fit.  Here "I" refers to the weighted sum of the
         "XX" and "YY" polarisations for stacking measurements and the
         unweighted sum of "XX" and "YY" for power spectrum measurements.
-        "joint" refers to a simultaneous fit to the "XX" and "YY" or "I" 
+        "joint" refers to a simultaneous fit to the "XX" and "YY" or "I"
         and "Q" polarisations.
     pol_stokes : bool
-        If True, assume that all input files contain Stokes parameters 
+        If True, assume that all input files contain Stokes parameters
         instead of instrumental polarisations. Default: False.
     model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
                   "SimulationTemplate"|"SimulationTemplateFoG"|
@@ -197,7 +197,8 @@ def run_mcmc(
             if container_type == "draco.core.containers.FrequencyStackByPol":
                 polname = _stacking_polname
             elif container_type in [
-                "draco.core.containers.PowerSpectrum2D", "draco.core.containers.PowerSpectrum1D"
+                "draco.core.containers.PowerSpectrum2D",
+                "draco.core.containers.PowerSpectrum1D",
             ]:
                 polname = _ps_polname
             else:
@@ -353,7 +354,9 @@ def run_mcmc(
     mock_meas, _, _, _ = utils.initialize_pol(
         mocks, pol=required_pol, combine=combine_pol
     )
-    mock_meas = scale * np.take_along_axis(_re(mock_meas), isort[np.newaxis, ...], axis=-1)
+    mock_meas = scale * np.take_along_axis(
+        _re(mock_meas), isort[np.newaxis, ...], axis=-1
+    )
 
     # Initialize array for transfer function
     if transfer is not None:
@@ -406,7 +409,9 @@ def run_mcmc(
         if pol_stokes:
             ipol = np.array([pol.index(pstr) for pstr in [polname["I"], polname["Q"]]])
         else:
-            ipol = np.array([pol.index(pstr) for pstr in [polname["XX"], polname["YY"]]])
+            ipol = np.array(
+                [pol.index(pstr) for pstr in [polname["XX"], polname["YY"]]]
+            )
         npol_fit = len(ipol)
 
         C = utils.ravel_covariance(cov[ipol][:, ipol])
@@ -470,7 +475,9 @@ def run_mcmc(
 
     results.attrs["seed"] = str(model.seed)
     results.attrs["model"] = model_name
-    results.attrs["pol_fit"] = pol_fit
+    results.attrs["pol_fit"] = (
+        polname[pol_fit] if pol_fit in polname.keys() else pol_fit
+    )
 
     results["mock"][:] = mock_meas
     results[dset][:] = data_meas
