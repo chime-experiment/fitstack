@@ -64,9 +64,9 @@ class Model(object):
             If the seed is not provided, then a random
             seed will be taken from system entropy.
         force_real : bool
-            Force input datasets to be real. Assumes that input 
-            datasets have been previously examined to verify 
-            that imaginary parts are small and/or unimportant. 
+            Force input datasets to be real. Assumes that input
+            datasets have been previously examined to verify
+            that imaginary parts are small and/or unimportant.
             Default: True.
         param_spec : dict
             Specifies the prior distribution for each parameter.
@@ -368,7 +368,7 @@ class NullModel(Model):
         model : float
             Null model value (zero).
         """
-        return 0.
+        return 0.0
 
 
 class ScaledShiftedTemplate(Model):
@@ -1089,7 +1089,6 @@ class AutoSimulationTemplate2Dto1D(Model):
         **kwargs,
     ):
 
-
         super().__init__(*args, **kwargs)
 
         if derivs is None:
@@ -1243,7 +1242,7 @@ class AutoSimulationTemplate2Dto1D_Omega2(AutoSimulationTemplate2Dto1D):
         omega2 = param_dict.pop("omega^2")
         # Need to allow omega to be complex so that omega^2 can be negative
         # when model is evaluated
-        param_dict["omega"] = (omega2 + 1.j)**0.5
+        param_dict["omega"] = (omega2 + 1.0j) ** 0.5
 
         if self.slow_1d_binning:
             model = self._signal_template.signal_1D_slow(**param_dict)[pol_sel]
