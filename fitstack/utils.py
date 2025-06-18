@@ -451,8 +451,6 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
 
     if combine:
         # Make slices that select combined pol in outputs
-        old_slc_out = slc_out
-        old_slc_out_nomock = slc_out_nomock
         slc_out = (slice(None),) * ax + (-1,)
         slc_out_nomock = (slice(None),) * ax_nomock + (-1,)
         # Compute data, weights, coords for combined pol
