@@ -189,11 +189,11 @@ def combine_pol(cnt):
     -------
     output : dict
         Dictionary with the following keys:
-        - "z": Weighted sum of the relevant dataset for the XX and YY 
+        - "z": Weighted sum of the relevant dataset for the XX and YY
            polarisations.
         - "wz": The sum of the weights for the XX and YY polarisations.
-        - "x": The weighted average of the independent coordinate (frequency 
-          lag, k, or dict with kpara and kperp keys) for the XX and YY 
+        - "x": The weighted average of the independent coordinate (frequency
+          lag, k, or dict with kpara and kperp keys) for the XX and YY
           polarisations.
         In addition, if the input is a PowerSpectrum2D container, the dict
         also contains:
@@ -261,14 +261,14 @@ def combine_pol(cnt):
     wz = np.sum(w, axis=ax)
     z = np.sum(w * y, axis=ax) * tools.invert_no_zero(wz)
 
-    # Compute coordinates (freq/k) and other ancillary datasets for 
+    # Compute coordinates (freq/k) and other ancillary datasets for
     # averaged data
     if data_type == "stack":
         # Frequencies are identical for XX and YY, so no average needed
         x = cnt.freq
 
     elif data_type == "ps2D":
-        # k_par and k_perp are identical for XX and YY, so no average needed 
+        # k_par and k_perp are identical for XX and YY, so no average needed
         # here either
         x = {"kpara": cnt.kpara, "kperp": cnt.kperp}
 
@@ -298,7 +298,7 @@ def combine_pol(cnt):
                 )
             # Just use weights for first mock, modifying ax to account for
             # fact that we've selected a single element of the mock axis
-            x = np.sum(w[0] * x, axis=ax-1) * tools.invert_no_zero(wz[0])
+            x = np.sum(w[0] * x, axis=ax - 1) * tools.invert_no_zero(wz[0])
         else:
             x = np.sum(w * x, axis=ax) * tools.invert_no_zero(wz)
 
@@ -351,9 +351,7 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
     _dset_name = {"stack": "stack", "ps2D": "spectrum", "ps1D": "spectrum"}
 
     if combine and ("I" in pol or "Q" in pol):
-        raise RuntimeError(
-            "Cannot combine polarizations if Stokes parameters provided"
-        )
+        raise RuntimeError("Cannot combine polarizations if Stokes parameters provided")
 
     if isinstance(cnt, containers.FrequencyStackByPol):
         data_type = "stack"
@@ -389,10 +387,10 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
     shp = list(cnt[dset].shape)
     shp[ax] = num_pol
 
-    # If input is MockContainer, some datasets (e.g. mask for PowerSpectrum2D) 
-    # will not have a mock axis, so the shapes of these datasets in the 
-    # output container will not be the same as the data dataset. So, 
-    # we need to separately track the pol axis and output dataset shape 
+    # If input is MockContainer, some datasets (e.g. mask for PowerSpectrum2D)
+    # will not have a mock axis, so the shapes of these datasets in the
+    # output container will not be the same as the data dataset. So,
+    # we need to separately track the pol axis and output dataset shape
     # for these containers.
     if isinstance(cnt, containers.MockContainer):
         nomock_dset = cnt.non_mock_datasets[0]
@@ -410,13 +408,15 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
         x = np.zeros(shp, dtype=cnt[dset].dtype)
     else:
         x = {
-            "kpara": np.zeros(tuple(shp[:-2]) + (len(cnt.kpara),), dtype=cnt.kpara.dtype),
+            "kpara": np.zeros(
+                tuple(shp[:-2]) + (len(cnt.kpara),), dtype=cnt.kpara.dtype
+            ),
             "kperp": np.zeros(
                 tuple(shp[:-2]) + (len(cnt.kperp),), dtype=cnt.kperp.dtype
             ),
         }
 
-    # Make slices for transferring desired pols in datasets from 
+    # Make slices for transferring desired pols in datasets from
     # input to output container
     slc_in = (slice(None),) * ax + (ipol,)
     slc_out = (slice(None),) * ax + (slice(0, num_cpol),)
@@ -448,7 +448,6 @@ def initialize_pol(cnt, pol=None, combine=False, return_signal_mask_and_neff=Fal
 
         signal_mask = np.zeros(shp_nomock, dtype=cnt.mask.dtype)
         signal_mask[slc_out_nomock] = cnt.mask[slc_in_nomock]
-
 
     if combine:
         # Make slices that select combined pol in outputs
@@ -600,17 +599,15 @@ def load_pol(filename, pol=None):
         if pol is None:
             pol = ["XX", "YY"]
     elif container_path in [
-        "draco.core.containers.PowerSpectrum2D", 
-        "draco.core.containers.MockPowerSpectrum2D", 
+        "draco.core.containers.PowerSpectrum2D",
+        "draco.core.containers.MockPowerSpectrum2D",
         "draco.core.containers.PowerSpectrum1D",
         "fitstack.containers.MockPowerSpectrum1D",
     ]:
         if pol is None:
             pol = ["XX-XX", "YY-YY"]
     else:
-        raise RuntimeError(
-            f"Container type of file ({container_path}) not recognized"
-        )
+        raise RuntimeError(f"Container type of file ({container_path}) not recognized")
 
     pol = np.atleast_1d(pol)
 

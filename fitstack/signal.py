@@ -14,6 +14,7 @@ from draco.analysis.powerspec import get_1d_ps
 from . import utils
 from cora.util import cosmology
 from cora.util import units as u
+
 logger = logging.getLogger(__name__)
 
 
@@ -576,8 +577,8 @@ class AutoSignalTemplate2D:
     logbins : bool
         Whether bins should be log-spaced. Default: True.
     force_real : bool
-        Force input datasets to be real. Assumes that input datasets have been previously 
-        examined to verify that imaginary parts are small and/or unimportant. 
+        Force input datasets to be real. Assumes that input datasets have been previously
+        examined to verify that imaginary parts are small and/or unimportant.
         Default: True.
     """
 
@@ -602,7 +603,7 @@ class AutoSignalTemplate2D:
         self._nbins = nbins
         self._logbins = logbins
         self.force_real = force_real
-        self._mcmc_binning_cache = None        
+        self._mcmc_binning_cache = None
         logger.debug(f"Using deriv modes: {self._derivs}")
         logger.debug(f"Using aliases: {self._aliases}")
         logger.debug(f"Using factor: {self._factor}")
@@ -613,52 +614,50 @@ class AutoSignalTemplate2D:
 
     def _re(self, x):
         return np.real(x) if self.force_real else x
-    
+
     def _cache_mcmc_binning(self):
         """Cache quantities needed for binning 2d power spectrum to 1d."""
         cache = {}
-    
+
         for ipol in range(self._signal_mask.shape[0]):
-            kpp, kll = np.meshgrid(self._kperp, self._kpara) 
+            kpp, kll = np.meshgrid(self._kperp, self._kpara)
             k = np.sqrt(kpp**2 + kll**2)
-        
+
             # Apply signal window if present
             if self._signal_mask is not None:
                 k = k[self._signal_mask[ipol]]
-                weight = self._ps2D_weight[ipol][self._signal_mask[ipol]] 
+                weight = self._ps2D_weight[ipol][self._signal_mask[ipol]]
 
-        
             # Flatten arrays
             k1D = k.flatten()
-            w1D = weight.flatten()  
-        
+            w1D = weight.flatten()
+
             # Calculate bin edges
             kmin = k1D[k1D > 0].min()
             kmax = k1D.max()
-        
+
             if self._logbins:
                 kbins = np.logspace(np.log10(kmin), np.log10(kmax), self._nbins + 1)
             else:
                 kbins = np.linspace(kmin, kmax, self._nbins + 1)
-        
-            indices = np.digitize(k1D, kbins)
-        
-            # Pre-compute weight sums for each bin 
-            w_sums = np.zeros(self._nbins)
-            for i in np.arange(len(kbins) -1) +1:
-                w_b = w1D[indices == i]
-                w_sums[i-1] = np.sum(w_b)
 
-        
+            indices = np.digitize(k1D, kbins)
+
+            # Pre-compute weight sums for each bin
+            w_sums = np.zeros(self._nbins)
+            for i in np.arange(len(kbins) - 1) + 1:
+                w_b = w1D[indices == i]
+                w_sums[i - 1] = np.sum(w_b)
+
             cache[ipol] = {
-                'indices': indices,
-                'kbins': kbins,
-                'w1D': w1D,           
-                'w_sums': w_sums      
+                "indices": indices,
+                "kbins": kbins,
+                "w1D": w1D,
+                "w_sums": w_sums,
             }
-    
+
         self._mcmc_binning_cache = cache
-        logger.debug("MCMC binning calculations cached")    
+        logger.debug("MCMC binning calculations cached")
 
     @classmethod
     def load_from_ps2Dfiles(
@@ -702,8 +701,8 @@ class AutoSignalTemplate2D:
             Add an element to the polarisation axis called I that
             is the weighted sum of the XX and YY polarisation.
         force_real
-            Force input datasets to be real. Assumes that input datasets have 
-            been previously examined to verify that imaginary parts are small 
+            Force input datasets to be real. Assumes that input datasets have
+            been previously examined to verify that imaginary parts are small
             and/or unimportant. Default: True.
         **kwargs
             Arguments passed on to the constructor.
@@ -746,9 +745,7 @@ class AutoSignalTemplate2D:
             d = Path(d)
 
             if not d.is_dir():
-                raise ValueError(
-                    "Glob pattern for templates must point to directories"
-                )
+                raise ValueError("Glob pattern for templates must point to directories")
 
             matching[key] = Path(d)
 
@@ -951,7 +948,9 @@ class AutoSignalTemplate2D:
 
         return signal
 
-    def signal_1D_slow(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
+    def signal_1D_slow(
+        self, *, omega: float, b_HI: float, **kwargs: float
+    ) -> np.ndarray:
         """Return the 1D power spectrum template, binned from 2D template.
 
         Uses `get_1d_ps` from `draco.analysis.powerspec`, which re-calculates
@@ -991,11 +990,11 @@ class AutoSignalTemplate2D:
             )
 
         return signal_1D
-    
+
     def signal_1D(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
         """Return the 1D power spectrum template with cached binning schemes.
-    
-            Parameters
+
+        Parameters
         ----------
         omega
             Overall scaling.
@@ -1010,34 +1009,32 @@ class AutoSignalTemplate2D:
         signal
             Signal template for the given parameters. An array of [pol, k].
         """
-    
+
         _signal_2D = self.signal_2D(omega=omega, b_HI=b_HI, **kwargs)
         signal_1D = np.zeros((_signal_2D.shape[0], self._nbins))
-    
+
         if self._mcmc_binning_cache is None:
             self._cache_mcmc_binning()
-    
+
         for ipol in range(_signal_2D.shape[0]):
             cache = self._mcmc_binning_cache[ipol]
-            indices = cache['indices']
-            w1D = cache['w1D']
-            w_sums = cache['w_sums']
-        
+            indices = cache["indices"]
+            w1D = cache["w1D"]
+            w_sums = cache["w_sums"]
+
             if self._signal_mask is not None:
                 p1D = _signal_2D[ipol][self._signal_mask[ipol]].flatten()
             else:
                 p1D = _signal_2D[ipol].flatten()
-        
+
             # Compute binned power spectrum using cached values
             with np.errstate(divide="ignore", invalid="ignore"):
-                for i in np.arange(len(cache['kbins']) - 1) + 1:
+                for i in np.arange(len(cache["kbins"]) - 1) + 1:
                     bin_mask = indices == i
-                    p = np.sum(w1D[bin_mask] * p1D[bin_mask])/w_sums[i-1]
-                    signal_1D[ipol, i-1] = p
+                    p = np.sum(w1D[bin_mask] * p1D[bin_mask]) / w_sums[i - 1]
+                    signal_1D[ipol, i - 1] = p
 
-    
-        return signal_1D    
-
+        return signal_1D
 
     def multiply_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
         """Override in subclass to multiply signal by function pre-non-components."""
@@ -1095,15 +1092,15 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         derivs: Optional[Dict[str, Tuple[float, float]]] = None,
         convolutions: Optional[Dict[str, Tuple[float, float]]] = None,
         kpara_range: Optional[Tuple[float, float]] = None,
-        z_eff: Optional[float] = None,  # effective redshift      
+        z_eff: Optional[float] = None,  # effective redshift
         *args,
         **kwargs,
     ):
-        
+
         # Set default z_eff if None
         self.z_eff = z_eff if z_eff is not None else 1.0
         cosmo_cora = cosmology.Cosmology()
-        self.H_z = cosmo_cora.H(self.z_eff) * u.mega_parsec / 1000.  # In km/s/Mpc 
+        self.H_z = cosmo_cora.H(self.z_eff) * u.mega_parsec / 1000.0  # In km/s/Mpc
 
         if derivs is None:
             derivs = {
@@ -1197,7 +1194,9 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             * (alpha**2 - r_sqrt) ** 4
             * tools.invert_no_zero((alpha * 2 - 1.0) ** 2 * var_ratio)
         )
-        w_mask = (self.kpara >= self._kpara_range[0]) & (self.kpara <= self._kpara_range[1])
+        w_mask = (self.kpara >= self._kpara_range[0]) & (
+            self.kpara <= self._kpara_range[1]
+        )
         w *= w_mask[np.newaxis, :, np.newaxis]
 
         # From the definition of y, we know that s^2 = y/kpar^2. We optimally
@@ -1231,21 +1230,24 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             scale = self._solve_scale(base, ps2Ds[key], alpha)
             self._convolution_scale[name] = scale
 
-
     def _get_factor(self) -> float:
         """Calculate the conversion factor connecting tau and k_parallel.
-        
+
         C = -1/(2 pi nu21) * c/H(z) * (1+z)²
-        
+
         Returns
         -------
         C : float
             Conversion factor
         """
 
-        C = (-1.0 / (2 * np.pi * u.nu21)) * ((u.c / u.kilo) / self.H_z) * (1 + self.z_eff)**2
+        C = (
+            (-1.0 / (2 * np.pi * u.nu21))
+            * ((u.c / u.kilo) / self.H_z)
+            * (1 + self.z_eff) ** 2
+        )
 
-        return C            
+        return C
 
     def multiply_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
         """Multiply the 2d power spectrum with the relative FoG kernel.
@@ -1264,7 +1266,7 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
         """
         # Calculate the conversion factor
         C = self._get_factor()
-        
+
         # Loop over parameters corresponding to distinct kernels we'll need to
         # multiply into the signal
         for name, (_, x0) in self._convolutions.items():
@@ -1283,8 +1285,8 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             scale = alpha * scale0
 
             # Multiply kernel into signal
-            signal *= (1.0 + (scale0 * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2) / (
-                1.0 + (scale * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2
-            )
+            signal *= (
+                1.0 + (scale0 * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2
+            ) / (1.0 + (scale * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2)
 
         return signal
