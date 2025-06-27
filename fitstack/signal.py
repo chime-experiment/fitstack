@@ -1870,6 +1870,8 @@ class AutoSignalTemplate2DFoG(AutoSignalTemplate2D):
             # Multiply kernel into signal
             signal *= (
                 1.0 + (scale0 * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2
-            ) / (1.0 + (scale * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2)
+            ) ** 2 / (
+                1.0 + (scale * C * self.kpara[np.newaxis, :, np.newaxis]) ** 2
+            ) ** 2
 
         return signal
