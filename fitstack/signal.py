@@ -1,11 +1,13 @@
 import logging
 import re
 import glob
-from typing import Dict, Optional, Tuple, List
+from typing import Dict, Optional, Tuple, List, Callable
 from pathlib import Path
 
 import numpy as np
 from scipy.fftpack import next_fast_len
+from scipy.optimize import curve_fit, OptimizeWarning
+from scipy.interpolate import CubicSpline
 
 from draco.util import tools
 from draco.core.containers import FrequencyStackByPol, PowerSpectrum1D, PowerSpectrum2D
@@ -557,6 +559,587 @@ class SignalTemplateFoG(SignalTemplate):
         signalc = np.fft.irfft(fft_signal * fft_transfer, fsize, axis=-1)[..., fslice]
 
         return signalc
+
+
+class AutoSignalTemplate1D:
+    """Power spectrum templates from pre-simulated modes and input parameters.
+
+    Parameters
+    ----------
+    factor : float
+        A scaling factor to apply to the sims.
+    nbins : int
+        Number of 1d k bins. Default: 10.
+    logbins : bool
+        Whether bins should be log-spaced. Default: True.
+    force_real : bool
+        Force input datasets to be real. Assumes that input datasets have
+        been previously examined to verify that imaginary parts are small
+        and/or unimportant. Default: True.
+    """
+
+    def __init__(
+        self,
+        factor: float = 1,
+        nbins: int = 7,
+        logbins: bool = True,
+        force_real: bool = True,
+    ):
+        self._factor = factor
+        self._nbins = nbins
+        self._logbins = logbins
+        self.force_real = force_real
+        logger.debug(f"Using factor: {self._factor}")
+        logger.debug(
+            f"Using {self._nbins} "
+            f"{'log-spaced' if self._logbins else 'linearly-spaced'} bins"
+        )
+
+    def _re(self, x):
+        return np.real(x) if self.force_real else x
+
+    @classmethod
+    def load_from_ps1Dfiles(
+        cls,
+        pattern: str,
+        clustering_filename_pattern: str = "*.h5",
+        shotnoise_filename_pattern: str = "*.h5",
+        pol: List[str] = None,
+        combine: bool = True,
+        force_real: bool = True,
+        **kwargs,
+    ):
+        """Load the signal templates from a set of 1d power spectrum files.
+
+        This will load the ps1D files from each location and try to
+        compile them into a set which can be used to generate signal
+        templates.
+
+        The clustering-signal templates should be stored in directories
+        with names of the form `*_bias_b_Pk_p_FoGh_f`, where:
+        - `b` is one of `0`, `0.5`, or `1`, corresponding to the ratio of
+           b_HI and the fiducial b_HI value
+        - `p` is one of `lin` or `nonlin`, and indicates the nonlinearity
+          of the matter power spectrum
+        - `f` is a float indicating the value of the Finger of God damping
+          parameter, relative to the fiducial value (`f=1`)
+
+        If present, the shot noise templates should be stored in
+        directories with names of the form `*_shot_FoGs_f` where `f` is
+        defined as above.
+
+        Parameters
+        ----------
+        pattern
+            A glob pattern that isolates the directories containing the
+            signal templates.
+        clustering_filename_pattern
+            A glob pattern that specifies the filenames containing the
+            clustering-signal templates.
+        shotnoise_filename_pattern
+            A glob pattern that specifies the filenames containing the
+            shot noise templates.
+        pol
+            The desired polarisations.
+        combine
+            Add an element to the polarisation axis called I that
+            is the weighted sum of the XX and YY polarisation.
+        force_real
+            Force input datasets to be real. Assumes that input datasets
+            havebeen previously examined to verify that imaginary parts
+            are small and/or unimportant.
+        **kwargs
+            Arguments passed on to the constructor.
+        """
+
+        dirs = glob.glob(pattern)
+
+        matching_clus, matching_shot = {}, {}
+
+        # Examine the format of each directory
+        for d in sorted(dirs):
+            logger.debug(f"Processing directory: {d}")
+
+            # Parse directory name for clustering or shot noise parameters
+            clus_re = re.search(r"bias_([0-9\.]+)_Pk_([A-Za-z]+)_FoGh_([0-9\.]+)/", d)
+            shot_re = re.search(r"shot_FoGh_([0-9\.]+)/", d)
+
+            if clus_re:
+                # bias will be "0", "0.5", or "1"
+                bias = clus_re.group(1)
+                # pk_type will be "nonlin", "lin"
+                pk_type = clus_re.group(2)
+                # alphaFoG_clus with be a float
+                alphaFoG_clus = clus_re.group(3)
+                # Create a composite key that identifies the templates
+                key = f"clus-{bias}-{pk_type}-{alphaFoG_clus}"
+            elif shot_re:
+                # alphaFoG_shot with be a float
+                alphaFoG_shot = shot_re.group(1)
+                # Create a composite key that identifies the templates
+                key = f"shot-{alphaFoG_shot}"
+            else:
+                logger.info(f"Directory {d} does not match expected format, rejecting")
+                continue
+
+            # If key has been encountered before, raise error
+            if key in matching_clus.keys() or key in matching_shot.keys():
+                raise ValueError(
+                    "Did not find a unique set of modes at this location. "
+                    "You might need to refine the pattern."
+                )
+
+            # Check that we're working with a directory
+            d = Path(d)
+            if not d.is_dir():
+                raise ValueError("Glob pattern for templates must point to directories")
+
+            if key.startswith("clus"):
+                matching_clus[key] = d
+            else:
+                matching_shot[key] = d
+
+        # For each template type (clustering vs. shot noise) and each directory,
+        # load templates and average them together
+        ps1Ds_clus, ps1Ds_shot = {}, {}
+        for matching, ps1Ds, filename_pattern in zip(
+            [matching_clus, matching_shot],
+            [ps1Ds_clus, ps1Ds_shot],
+            [clustering_filename_pattern, shotnoise_filename_pattern],
+        ):
+            for key, d in matching.items():
+                ps1D_files = sorted(list(d.glob(filename_pattern)))
+
+                if len(ps1D_files) == 0:
+                    logger.info("No files found at matching path.")
+                    continue
+
+                mocks = utils.load_mocks(ps1D_files, pol=pol)
+                ps1Ds[key] = utils.average_data(
+                    mocks, pol=mocks.index_map["pol"], combine=combine, sort=False
+                )
+
+        # Create the object
+        self = cls(**kwargs)
+        self.force_real = force_real
+
+        # Set flag if shot noise templates are present
+        self.has_shot = len(ps1Ds_shot.keys()) > 0
+
+        # Construct all the required templates from the averaged inputs
+        self._interpret_ps1Ds(ps1Ds_clus, ps1Ds_shot)
+
+        return self
+
+    def _interpret_ps1Ds(
+        self,
+        ps1Ds_clus: Dict[str, PowerSpectrum1D],
+        ps1Ds_shot: Dict[str, PowerSpectrum1D],
+    ):
+        """Generate the required templates for the 1d power spectra."""
+
+        # Sort tuples of Pk strings and FoGh values based on which bias values
+        # they exist for
+        clus_keys_temp = {"0": [], "0.5": [], "1": []}
+        for key in ps1Ds_clus.keys():
+            key_split = key.split("-")
+            for b_str in ["0", "0.5", "1"]:
+                if key_split[1] == b_str:
+                    clus_keys_temp[b_str].append((key_split[2], key_split[3]))
+
+        # Collect tuples that exist for all 3 bias values
+        clus_keys = []
+        for key in clus_keys_temp["0"]:
+            if (key in clus_keys_temp["0.5"]) and (key in clus_keys_temp["1"]):
+                clus_keys.append(key)
+        logger.info(
+            "Found the following clustering templates "
+            f"for all 3 bias values: {clus_keys}"
+        )
+
+        # Find FoGs values from shot noise templates
+        shot_keys = [k.split("-")[1] for k in ps1Ds_shot.keys()]
+        logger.info(f"Found the following shot noise templates {shot_keys}")
+
+        self._ps1D_modes = {}
+
+        # Get the first k1D axis as reference
+        self._k1D = next(iter(ps1Ds_clus.values())).k1D[:].copy()
+        self._k1D.flags.writeable = False
+
+        def _check_load_ps1D(ps1Ds, key):
+            """Validate the 1D power spectrum and extract the template/variance."""
+
+            if key not in ps1Ds:
+                raise RuntimeError(f"Power spectrum {key} was not loaded.")
+
+            ps1D = ps1Ds[key]
+
+            if not np.array_equal(ps1D.k1D[:], self._k1D):
+                raise RuntimeError(
+                    f"k1D values in power spectrum {key} do not match reference."
+                )
+
+            return (
+                self._factor * self._re(ps1D.spectrum[:]),
+                self._factor**2
+                * self._re(ps1D.var[:])
+                * tools.invert_no_zero(ps1D.attrs["num"]),
+            )
+
+        # Load clustering templates and construct the various HI,v
+        # combination terms
+        for term in clus_keys:
+            logger.debug(f"Combining clustering mode {term[0]}-{term[1]}")
+
+            s0, v0 = _check_load_ps1D(ps1Ds_clus, f"clus-0-{term[0]}-{term[1]}")
+            sh, vh = _check_load_ps1D(ps1Ds_clus, f"clus-0.5-{term[0]}-{term[1]}")
+            s1, v1 = _check_load_ps1D(ps1Ds_clus, f"clus-1-{term[0]}-{term[1]}")
+
+            # Initialize arrays for b_HI = 0, 1/2, 1
+            template_mean = np.zeros((3,) + s0.shape)
+            template_var = np.zeros((3,) + s0.shape)
+
+            # Calculate the template for each component
+            ## s_hh = 2 [s(1,1,0) - 2s(1,1/2,0) + s(1,0,0)]
+            template_mean[0] = 2 * (s1 - 2 * sh + s0)
+            ## s_hv = s(1,1/2,0) - s(1,0,0) - 1/4 shh
+            template_mean[1] = sh - s0 - 0.25 * template_mean[0]
+            ## s_vv = s(1,0,0)
+            template_mean[2] = s0
+
+            # Calculate the variance of each component, using error propagation
+            template_var[0] = 4 * (v1 + 4 * vh + v0)
+            template_var[1] = vh + v0 + 0.0625 * template_var[0]
+            template_var[2] = v0
+
+            self._ps1D_modes[f"clus-{term[0]}-{term[1]}"] = (
+                template_mean,
+                template_var,
+            )
+
+        # Load shot noise templates
+        for term in shot_keys:
+            logger.debug(f"Loading shot noise mode {term}")
+            self._ps1D_modes[f"shot-{term}"] = _check_load_ps1D(term)
+
+    def signal_1D(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
+        """Return the 1D power spectrum template for the given parameters.
+
+        Parameters
+        ----------
+        omega
+            Overall scaling.
+        b_HI
+            Scaling for the HI bias term.
+        **kwargs
+            Values for all other parameters (e.g. NL, FoGh, SN, FoGs).
+
+        Returns
+        -------
+        signal
+            Signal template for the given parameters. An array with shape
+            [pol, k1D].
+        """
+
+        def _combine_kaiser(vec):
+            # Combine templates needed for Kaiser factor
+            return b_HI**2 * vec[0] + 2 * b_HI * vec[1] + vec[2]
+
+        # Check that NL is present in kwargs
+        if "NL" not in kwargs:
+            raise ValueError("Need a value for parameter NL")
+
+        # Rescale each template before combining
+        nonlin_signal = self.rescale_templates(
+            self._ps1D_modes["clus-nonlin-1"][0],
+            template="clus-nonlin",
+            alpha_par="FoGh",
+            **kwargs,
+        )
+        lin_signal = self.rescale_templates(
+            self._ps1D_modes["clus-lin-1"][0],
+            template="clus-lin",
+            alpha_par="FoGh",
+            **kwargs,
+        )
+
+        # Combine clustering templates according to Kaiser factor and matter
+        # nonlinearity prescription
+        nonlin_signal = _combine_kaiser(nonlin_signal)
+        lin_signal = _combine_kaiser(lin_signal)
+        signal = kwargs["NL"] * nonlin_signal + (1 - kwargs["NL"]) * lin_signal
+
+        # Scale by the overall prefactor (omega**2 for auto-correlation).
+        # If we sampled directly in omega^2, this omega may be complex,
+        # so we need to take the real part here to avoid having omega**2
+        # evaluate as a compex number with zero imaginary part.
+        signal *= np.real(omega**2)
+
+        if self.has_shot:
+            if "shot-1" in self._ps1D_modes.keys() and kwargs["FoGs"] != 0:
+                # If shot-1 is present and FoGs parameter is nonzero,
+                # recale FoGs=1 template
+                shot_signal = self.rescale_templates(
+                    self._ps1D_modes["shot-1"][0],
+                    template="shot",
+                    alpha_par="FoGs",
+                    **kwargs,
+                )
+            elif "shot-0" in self._ps1D_modes.keys():
+                # If shot-0 is present but shot-1 is not,
+                # or FoGs parameter is zero, use shot-0
+                # as shot noise template
+                shot_signal = self._ps1D_modes["shot-0"]
+
+            signal += kwargs["SN"] * shot_signal
+
+        # If desired, rescale entire signal
+        signal = self.multiply_signal(signal, **kwargs)
+
+        return signal
+
+    def rescale_templates(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Override in subclass to rescale templates."""
+        return signal
+
+    def multiply_signal(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Override in subclass to multiply entire signal by a function."""
+        return signal
+
+    @property
+    def k1D(self):
+        """Get k1D values the template is defined at."""
+        return self._k1D
+
+    @property
+    def params(self):
+        """The names of all the parameters needed to generate the template."""
+        return ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+
+class AutoSignalTemplate1DFoG(AutoSignalTemplate1D):
+    """Power spectrum templates from pre-simulated modes and input parameters."""
+
+    def _interpret_ps1Ds(
+        self,
+        ps1Ds_clus: Dict[str, PowerSpectrum1D],
+        ps1Ds_shot: Dict[str, PowerSpectrum1D],
+    ):
+        """Generate the required templates for the 1d power spectra."""
+
+        super()._interpret_ps1Ds(ps1Ds_clus, ps1Ds_shot)
+
+        self._sigma2_for_amplitude = {}
+        self._FoG_shape_splines = {}
+
+        for template in ["clus-nonlin", "clus-lin"]:
+            self._sigma2_for_amplitude[template] = self._solve_sigma2_for_amplitude(
+                template
+            )
+            self._FoG_shape_splines[template] = self._compute_FoG_shape_splines(
+                template
+            )
+
+        if self.has_shot:
+            self._sigma2_for_amplitude["shot"] = self._solve_sigma2_for_amplitude(
+                "shot"
+            )
+            self._FoG_shape_splines["shot"] = self._compute_FoG_shape_splines("shot")
+
+    def ratio_amplitude_func(self, alpha: np.ndarray, sig2: np.ndarray) -> np.ndarray:
+        r"""Function to rescale template ratios to a common amplitude.
+
+        The following function is a good way to rescale template amplitude
+        ratios at different :math:`\alpha_{\rm FoG}` ratios:
+
+        .. math::
+
+            r(\alpha_{\rm FoG}) = \frac{(1+\sigma^2)^2}{(1+\alpha_{\rm FoG}^2\sigma^2)^2}
+
+        Parameters
+        ----------
+        alpha
+            Float or array of :math:`\alpha_{\rm FoG}` values.
+        sig2
+            Float or array of :math:`\sigma^2` values.
+
+        Returns
+        -------
+        func
+            Float or array of function values.
+        """
+        return (1 + sig2) ** 2 / (1 + sig2 * alpha**2) ** 2
+
+    def _solve_sigma2_for_amplitude(self, template: str) -> np.ndarray:
+        r"""Solve for effective scale for rescaling template amplitudes.
+
+        If :math:`r(\alpha_{\rm FoG})` is defined as the ratio of a template
+        to its value for :math:`\alpha_{\rm FoG}=1` at the lowest k bin,
+        we assume that :math:`r(\alpha_{\rm FoG})` is well-described by
+
+        .. math::
+
+            r(\alpha_{\rm FoG}) = \frac{(1+\sigma^2)^2}{(1+\alpha_{\rm FoG}^2\sigma^2)^2}
+
+        for some constant :math:`\sigma^2`. This routine solves for
+        :math:`\sigma^2`.
+
+        Parameters
+        ----------
+        template
+            Name of templates to rescale.
+
+        Returns
+        -------
+        sigma2
+            Effective scales used in rescaling function. Array with shape
+            `[term, pol]` where `term` denotes hh, hv, or vv.
+        """
+        # Get alphas and template ratios for desired template
+        alphas, template_ratios = self._get_template_ratios(template)
+
+        # For each of the hh, hv, and vv templates, solve for the effective
+        # scale sigma^2. Set assumed uncertainties equal to data, which ensures
+        # that each point receives the same relative weight in the fit
+        # (otherwise, much smaller values will be deprioritized in the fit)
+        sig2_list = np.zeros(template_ratios.shape[1:3], dtype=float)
+        for termi in range(sig2_list.shape[0]):
+            for poli in range(sig2_list.shape[1]):
+                # If fit fails, it's likely because the effective scale
+                # should be very close to zero so the desired relative
+                # tolerance in curve_fit is not achieved. In this case,
+                # we set the scale to zero
+                try:
+                    popt, _ = curve_fit(
+                        self.ratio_amplitude_func,
+                        alphas,
+                        template_ratios[:, termi, poli, 0],
+                        sigma=template_ratios[:, termi, poli, 0],
+                        p0=1.0,
+                    )
+                    sig2_list[termi, poli] = popt[0]
+                except OptimizeWarning:
+                    logger.info(
+                        "Fit for amplitude-scaling effective scale "
+                        "did not converge. Setting scale to 0."
+                    )
+                    sig2_list[termi, poli] = 0.0
+
+        return sig2_list
+
+    def _compute_FoG_shape_splines(
+        self, template: str
+    ) -> Callable[[np.ndarray], np.ndarray]:
+        """Compute cubic splines in alphaFoG for chosen template.
+
+        Ratios of templates to alphaFoG=1 versions are computed and
+        rescaled to a common amplitude, and then separate cubic splines
+        are fit to the rescaled ratio at each k.
+
+        Parameters
+        ----------
+        template
+            Name of template to compute splines for.
+
+        Returns
+        -------
+        splines
+            Function that evaluates spline, with return value with
+            shape `[term, pol, k]` where `term` denotes hh, hv, or
+            vv.
+        """
+        # Get alphas and template ratios for desired template
+        alphas, template_ratios = self._get_template_ratios(template)
+
+        # Rescale template ratios to common amplitude
+        template_ratios /= self.ratio_amplitude_func(
+            alphas[:, np.newaxis, np.newaxis, np.newaxis],
+            self._sigma2_for_amplitude[template][np.newaxis, :, :, np.newaxis],
+        )
+
+        # Compute cubic splines in alphaFoG for each term, pol, and k
+        splines = CubicSpline(
+            alphas, template_ratios, axis=0, bc_type="not-a-knot", extrapolate=True
+        )
+
+        # Store the values of the ratios at the min and max input alphas
+        ratios_alpha_min = template_ratios[0]
+        ratios_alpha_max = template_ratios[-1]
+
+        # Define a function that extrapolates the cubic spline results
+        # with constant values if alphas are provided that are outside the
+        # range of simulations we've loaded
+        def evaluate(alpha):
+            alpha_ = np.asarray(alpha)
+            spline_output = splines(alpha)
+
+            below = alpha_ < alphas[0]
+            above = alpha_ > alphas[-1]
+
+            spline_output = np.copy(spline_output)
+
+            if np.any(below):
+                spline_output[below] = ratios_alpha_min
+            if np.any(above):
+                spline_output[above] = ratios_alpha_max
+
+            return spline_output
+
+        return evaluate
+
+    def _get_template_ratios(self, template: str) -> Tuple[np.ndarray, np.ndarray]:
+        """Get ratios of templates to alphaFoG=1 templates.
+
+        Parameters
+        ----------
+        template
+            Name of template to fetch ratios for.
+
+        Returns
+        -------
+        alphas
+            Sorted array of alphaFoG values.
+        template_ratios
+            Ratios of templates. Array with shape `[term, pol, k]`
+            where `term` denotes hh, hv, or vv.
+        """
+        # Gather template ratios into a single array with axes
+        # [alphaFoG, term, pol, k] where term denotes hh, hv, or vv
+        alphas = []
+        template_ratios = []
+        for key in self._ps1D_modes.keys():
+            if not key.startswith(template):
+                continue
+
+            a = float(key.split("-")[2])
+            alphas.append(a)
+            template_ratios.append(
+                self._ps1D_modes[key][0] / self._ps1D_modes[f"{template}-1"][0]
+            )
+
+        # Sort array based on alpha_FoG values
+        sort_idx = np.argsort(alphas)
+        alphas = np.array(alphas)[sort_idx]
+        template_ratios = np.array(template_ratios)[sort_idx]
+
+        return alphas, template_ratios
+
+    def rescale_templates(self, signal: np.ndarray, **kwargs) -> np.ndarray:
+        """Rescale alphaFoG=1 templates to different values."""
+
+        alpha = kwargs[kwargs["alpha_par"]]
+        template = kwargs["template"]
+
+        # Apply amplitude rescaling
+        signal_out = signal * self.ratio_amplitude_func(
+            alpha, self._sigma2_for_amplitude[template][..., np.newaxis]
+        )
+
+        # Apply shape rescaling
+        signal_out *= self._FoG_shape_splines[template](alpha)
+
+        return signal_out
 
 
 class AutoSignalTemplate2D:
