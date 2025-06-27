@@ -30,9 +30,20 @@ def _all_subclasses(cls):
 
 SIMULATION_MODELS = [
     c.__name__
-    for c in [models.SimulationTemplate, models.AutoSimulationTemplate2Dto1D]
+    for c in [
+        models.SimulationTemplate,
+        models.AutoSimulationTemplate1D,
+        models.AutoSimulationTemplate2Dto1D,
+    ]
     + list(_all_subclasses(models.SimulationTemplate))
+    + list(_all_subclasses(models.AutoSimulationTemplate1D))
     + list(_all_subclasses(models.AutoSimulationTemplate2Dto1D))
+]
+
+PS1D_SIMULATION_MODELS = [
+    c.__name__
+    for c in [models.AutoSimulationTemplate1D]
+    + list(_all_subclasses(models.AutoSimulationTemplate1D))
 ]
 
 PS2D_SIMULATION_MODELS = [

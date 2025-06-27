@@ -1005,6 +1005,183 @@ class AutoScaledTemplate(Model):
         return model
 
 
+class AutoSimulationTemplate1D(Model):
+    """Linear combination of 1D power spectrum templates from simulations.
+
+    Note that Finger-of-God damping is *not* varied in this class:
+    the `FoGh` parameter have no effect, and the `FoGs` parameter just
+    switches between the alphaFoG=1 shot noise template (if `FoGs != 0`)
+    or the alphaFoG=0 template (if `FoGs == 0`). To force the no-FoG
+    form of shot noise, keep the `FoGs` parameter fixed to zero.
+
+    The derived class `AutoSimulationTemplate1DFoG` should be used to
+    vary Finger-of-God damping.
+    """
+
+    param_name = ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+        "NL": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -1.0,
+                "high": 7.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "SN": {
+            "fixed": True,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "FoGs": {
+            "fixed": True,
+            "value": 0.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate1D
+    _template_kwargs = ()
+
+    def __init__(
+        self,
+        pattern,
+        clustering_filename_pattern="*.h5",
+        shotnoise_filename_pattern="*.h5",
+        pol=None,
+        combine=True,
+        sort=False,
+        factor=1,
+        nbins=7,
+        logbins=True,
+        *args,
+        **kwargs,
+    ):
+
+        super().__init__(*args, **kwargs)
+
+        self._signal_template = self._template_class.load_from_ps1Dfiles(
+            pattern,
+            clustering_filename_pattern=clustering_filename_pattern,
+            shotnoise_filename_pattern=shotnoise_filename_pattern,
+            pol=pol,
+            combine=combine,
+            factor=factor,
+            nbins=nbins,
+            logbins=logbins,
+            force_real=self.force_real,
+            **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
+        )
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[6]
+            Parameter values, ordered as
+            ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"].
+        k1D, template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+
+        return model
+
+
+class AutoSimulationTemplate1DFoG(AutoSimulationTemplate1D):
+    """Power spectrum model with varying multiplicative FoG damping.
+
+    To vary FoG damping in the clustering signal but use the no-FoG
+    form of the shot noise template, keep the `FoGs` paramter fixed
+    to 0 but vary the `SN` parameter.
+    """
+
+    param_name = ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate1DFoG
+
+
 class AutoSimulationTemplate2Dto1D(Model):
     """Linear combination of 2D power spectrum templates from simulations."""
 
