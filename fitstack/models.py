@@ -1182,6 +1182,41 @@ class AutoSimulationTemplate1DFoG(AutoSimulationTemplate1D):
     _template_class = signal.AutoSignalTemplate1DFoG
 
 
+class AutoSimulationTemplate1DFoGTransform(AutoSimulationTemplate1DFoG):
+    """Power spectrum model with FoG and more efficient sampling.
+
+    This uses an alternative basis that makes the following replacement:
+
+    - `b_HI -> omega_b_HI = omega * b_HI`
+
+    However, the chains are returned (and priors applied) in the original basis.
+    """
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega*b basis."""
+
+        newsample = sample.copy()
+        newsample[..., 1] = sample[..., 0] * sample[..., 1]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, b basis."""
+
+        newsample = sample.copy()
+        newsample[..., 1] = sample[..., 1] / sample[..., 0]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        """The measure for the coordinate transform."""
+
+        # The measure for the transform for Omega*b
+        measure = -np.log(np.abs(theta[..., 0]))
+
+        return measure
+
+
 class AutoSimulationTemplate2Dto1D(Model):
     """Linear combination of 2D power spectrum templates from simulations."""
 
