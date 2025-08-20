@@ -213,7 +213,7 @@ def powerspectrum1d_min_chisq_fit(
     fit_kwargs["data"] = (
         _re(fit_cont.spectrum.data.local_array[ipol])
         if type(fit_cont.spectrum.data) is mpiarray.MPIArray
-        else fit_cont.spectrum.data[ipol]
+        else _re(fit_cont.spectrum.data[ipol])
     )
     fit_kwargs["inv_cov"] = fit_cont["precision"][:]
     fit_kwargs["transfer"] = None
