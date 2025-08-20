@@ -255,7 +255,7 @@ def powerspectrum1d_min_chisq_fit(
 
     # Determine initial guess for parameter values, and parameter bounds (if needed)
     if param0 is None:
-        param0 = get_param0(mcmcfit_cont, signal_model.param_name_fit)
+        param0 = get_param0(fit_cont, signal_model.param_name_fit)
     if method in BOUNDED_MINIMIZATION:
         param_bounds = get_bounds(signal_model, scale_bound=scale_bound)
     else:
