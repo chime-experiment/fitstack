@@ -5,7 +5,7 @@ import numpy as np
 import scipy.optimize
 import scipy.stats
 
-from caput import config
+from caput import config, mpiarray
 
 from draco.core import task
 
@@ -210,7 +210,11 @@ def powerspectrum1d_min_chisq_fit(
     # Set quantities needed for fit to data
     fit_kwargs = {}
     fit_kwargs["k1D"] = fit_cont.k1D
-    fit_kwargs["data"] = _re(fit_cont.spectrum.data.local_array[ipol])
+    fit_kwargs["data"] = (
+        _re(fit_cont.spectrum.data.local_array[ipol])
+        if type(fit_cont.spectrum.data) is mpiarray.MPIArray
+        else fit_cont.spectrum.data[ipol]
+    )
     fit_kwargs["inv_cov"] = fit_cont["precision"][:]
     fit_kwargs["transfer"] = None
     fit_kwargs["pol_sel"] = ipol
