@@ -184,7 +184,9 @@ def powerspectrum1d_min_chisq_fit(
 
     # Load MCMCFitPowerSpectrum1D container
     if isinstance(mcmcfit_cont, str):
-        fit_cont = containers.MCMCFitPowerSpectrum1D(utils.find_file(mcmcfit_cont))
+        fit_cont = containers.MCMCFitPowerSpectrum1D.from_file(
+            utils.find_file(mcmcfit_cont)
+        )
     else:
         fit_cont = mcmcfit_cont
 
