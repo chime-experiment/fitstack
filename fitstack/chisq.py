@@ -94,7 +94,7 @@ def get_bounds(mdl, scale_bound=0.0):
 
         # Set parameter bounds based on whether prior is uniform or Gaussian
         prior = mdl.priors[name]
-        if isinstance(prior, priors.Uniform):
+        if isinstance(prior, (priors.Uniform, priors.PowerLaw)):
             lb[nn] = prior.low
             ub[nn] = prior.high
         else:
