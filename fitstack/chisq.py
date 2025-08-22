@@ -365,6 +365,8 @@ def powerspectrum1d_min_chisq_fit(
     out.attrs["data_pvalue"] = data_pvalue
     out.attrs["data_nsigmas"] = data_nsigmas
 
+    out.attrs["param0"] = param0
+
     # Return the output container
     return out
 
