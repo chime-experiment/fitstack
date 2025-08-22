@@ -359,8 +359,8 @@ def powerspectrum1d_min_chisq_fit(
 
     # Compute p-value and "number of sigmas" for Delta chi^2 value for data
     dchisq_data = out.attrs["data_null_chisq"] - out.attrs["data_signal_chisq"]
-    data_pvalue = 1 - scipy.stats.chi2.cdf(dchisq_data, ndof_mocks)
-    data_nsigmas = scipy.stats.norm.ppf(1 - data_pvalue)
+    data_pvalue = scipy.stats.chi2.sf(dchisq_data, ndof_mocks)
+    data_nsigmas = scipy.stats.norm.isf(data_pvalue)
 
     out.attrs["data_pvalue"] = data_pvalue
     out.attrs["data_nsigmas"] = data_nsigmas
