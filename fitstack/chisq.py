@@ -111,6 +111,7 @@ def get_bounds(mdl, scale_bound=0.0):
 
 def powerspectrum1d_min_chisq_fit(
     mcmcfit_cont,
+    mcmcfit_cont_for_mocks=None,
     model_kwargs=None,
     param_spec=None,
     param0=None,
@@ -129,6 +130,10 @@ def powerspectrum1d_min_chisq_fit(
     mcmc_fit_cont : containers.MCMCFitPowerSpectrum1D or str
         Container (or container filename) with information about data,
         mocks, covariance, and signal model.
+    mcmcfit_cont_for_mocks : containers.MCMCFitPowerSpectrum1D or str
+        Container (or container filename) containing mocks to use for fits.
+        If not specified, mocks from `mcmc_fit_cont` are used.
+        Default: None.
     model_kwargs : dict, optional
         Dictionary that contains any keyword arguments that should be passed
         to the model class at initialization. Arguments used to generate
@@ -190,6 +195,17 @@ def powerspectrum1d_min_chisq_fit(
     else:
         fit_cont = mcmcfit_cont
 
+    # Load separate MCMCFitPowerSpectrum1D container with mocks, if specified
+    if mcmcfit_cont_for_mocks is None:
+        fit_cont_for_mocks = fit_cont
+    else:
+        if isinstance(mcmcfit_cont_for_mocks, str):
+            fit_cont_for_mocks = containers.MCMCFitPowerSpectrum1D.from_file(
+                utils.find_file(mcmcfit_cont_for_mocks)
+            )
+        else:
+            fit_cont_for_mocks = mcmcfit_cont_for_mocks
+
     # Get polarizations from input container
     pol = fit_cont.index_map["pol"]
     pol_fit = fit_cont.attrs["pol_fit"]
@@ -237,7 +253,7 @@ def powerspectrum1d_min_chisq_fit(
     null_model.set_data(**fit_kwargs)
 
     # Get mocks from MCMCFitPowerSpectrum1D container
-    mock_data = fit_cont["mock"][:, ipol]
+    mock_data = fit_cont_for_mocks["mock"][:, ipol]
     nmock, npol, nk = mock_data.shape
 
     # If desired, add one of the mocks to the data
