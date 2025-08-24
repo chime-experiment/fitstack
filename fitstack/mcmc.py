@@ -54,9 +54,15 @@ PS2D_SIMULATION_MODELS = [
 
 PERCENTILE = [2.5, 16, 50, 84, 97.5]
 
+# Co-pols are stored as XX, YY for stacking and XX-XX, YY-YY
+# for power spectra. Internally, we always use XX, YY, but we
+# need to map these to the relevant strings depending on the input
+# data.
+_STACKING_POLNAME = {"XX": "XX", "YY": "YY", "I": "I"}
+_PS_POLNAME = {"XX": "XX-XX", "YY": "YY-YY", "I": "I-I", "Q": "Q-Q"}
 
-# main script
-def run_mcmc(
+
+def initialize_mcmc_ingredients(
     data,
     mocks,
     data_2d=None,
@@ -81,137 +87,39 @@ def run_mcmc(
     flag_ind=None,
     force_real=True,
 ):
-    """Fit a model to the source stack using an MCMC.
+    """Initialize ingredients for MCMC.
 
-    Parameters
-    ----------
-    data : FrequencyStackByPol, PowerSpectrum1D, or str
-        Measurements of stacking or power spectrum.
-        This can either be a FrequencyStackByPol or PowerSpectrum1D
-        container, or the name of a file that holds such a container
-        and will be loaded from disk.
-    mocks : container, list of containers, str, or list of str
-        Mocks for estimating a noise covariance.
-        This can either be a MockFrequencyStackByPol or
-        MockPowerSpectrum1D container, a list of FrequencyStackByPol or
-        PowerSpectrum1D containers, or the name of a file or a list of
-        filenames that hold such containers and will be loaded from disk.
-    data_2d : PowerSpectrum2D or str
-        Measurements of 2d power spectrum, either as a PowerSpectrum2D
-        container or filename. When fitting to 1d power spectrum
-        measurements with a model that starts in 2d, weights and
-        (kpara,kperp) masking will be taken from here. Ignored if not
-        needed.
-    transfer : FrequencyStackByPol or str
-        The transfer function of the pipeline (only implemented for stacking).
-        The model for the stacked
-        signal will be convolved with the transfer function prior
-        to comparing to the data.  This can either be a
-        FrequencyStackByPol container or the name of a file that
-        holds such a container and will be loaded from disk.
-        If None, then a transfer function is not applied.  Default is None.
-    template : FrequencyStackByPol, PowerSpectrum1D, or str
-        Template for the stacked signal.  This can either be a
-        FrequencyStackByPol or PowerSpectrum1D container, or the name of
-        a file that holds such a container and will be loaded from disk.
-        Note that not all models require templates.  Default is None.
-    pol_fit : {"XX"|"YY"|"I"|"Q"|"joint"}
-        Polarisation to fit.  Here "I" refers to the weighted sum of the
-        "XX" and "YY" polarisations for stacking measurements and the
-        unweighted sum of "XX" and "YY" for power spectrum measurements.
-        "joint" refers to a simultaneous fit to the "XX" and "YY" or "I"
-        and "Q" polarisations.
-    pol_stokes : bool
-        If True, assume that all input files contain Stokes parameters
-        instead of instrumental polarisations. Default: False.
-    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
-                  "SimulationTemplate"|"SimulationTemplateFoG"|
-                  "SimulationTemplateFoGAltParam"|"AutoConstant"|
-                  "AutoSimulationTemplate2Dto1D"}
-        Name of the model to fit.  Specify the class name from the
-        fitstack.models module.
-    scale : float
-        All data will be scaled by this quantity.  Default is 1e6, under the
-        assumption that the signal in a stacking analysis is in units of Jy / beam
-        and we would like to convert to micro-Jy / beam.
-        Set to 1.0 if you do not want to scale the data.
-    nwalker : int
-        Number of walkers to use in the MCMC fit.  Default is 32.
-    nsample : int
-        Number of steps that each walker will take.  Default is 15000.
-    max_freq : float
-        The maximum frequency offset to include in a stacking fit.  If this None,
-        then all frequency offsets that are present in the data stack
-        will be included.  Default is None.
-    min_k, max_k : float
-        The minimum or maximum k values to include in a power spectrum fit.
-        Default is None.
-    flag_before : bool
-        Only relevant if max_freq, min_k, or max_k is not None.
-        The frequency offset flag will be applied prior to calculating the
-        inverse of the covariance matrix. Default is True.
-    normalize_template : bool
-        Divide the template by its maximum value prior to fitting.
-        Default is False.
-    mean_subtract : bool
-        Subtract the sample mean of the mocks from the data prior to fitting.
-        Default is True.
-    recompute_weight : bool
-        Set the weight dataset to the inverse variance over the mock catalogs
-        in a stacking analysis, or set the 1D `var` dataset to the variance over
-        the noise power spectra in a power spectrum analysis.
-        This is only used when averaging the "XX" and "YY" polarisations to
-        determine the "I" polarisation.  Otherwise whatever weight/var dataset
-        is saved to the file will be used.  Default is True.
-    param_spec : dict
-        Dictionary that specifies the prior distribution for each parameter.
-        See the docstring for the models.Model attribute for the correct format.
-    model_kwargs : dict
-        Dictionary that contains any keyword arguments that should be passed
-        to the model class at initialization.
-    seed : int
-        Seed to use for random number generation.  If the seed is not provided,
-        then a random seed will be taken from system entropy.
-    flag_ind : list
-        List of extra indices to flag. These are indices into the flattened data *after*
-        all other selections have been applied.
-    force_real : bool
-        Force input datasets to be real. Assumes that input datasets have
-        been previously examined to verify that imaginary parts are small and/or
-        unimportant. Default: True.
+    See run_mcmc docstring for parameter info.
 
     Returns
     -------
-    results : MCMCFit
-        Container with the results of the fit, including
-        parameter chains, chi-squared chains, autocorrelation length,
-        acceptance franction, parameter percentiles, best-fit model,
-        and model percentiles.  Also includes all data products
-        and ancillary data products, as well as the covariance and
-        precision matrix inferred from the mocks.
+    results : containers.MCMCFit
+        Container data products and ancillary data products, as well
+        as the covariance and precision matrix inferred from the mocks.
+    model : models.Model
+        Model to be used in chain.
+    eval_kwargs : dict
+        Keyword arguments to be used when evaluating model.
+    npol : int
+        Number of polarizations to fit.
+    nx : int
+        Number of data points to fit.
     """
 
     # Function to take real part if force_real is set
     def _re(x):
         return np.real(x) if force_real else x
 
-    # Co-pols are stored as XX, YY for stacking and XX-XX, YY-YY
-    # for power spectra. Internally, we always use XX, YY, but we
-    # need to map these to the relevant strings depending on the input
-    # data.
-    _stacking_polname = {"XX": "XX", "YY": "YY", "I": "I"}
-    _ps_polname = {"XX": "XX-XX", "YY": "YY-YY", "I": "I-I", "Q": "Q-Q"}
-
     if isinstance(data, str):
         with h5py.File(utils.find_file(data), "r") as handler:
             container_type = handler.attrs["__memh5_subclass"]
             if container_type == "draco.core.containers.FrequencyStackByPol":
-                polname = _stacking_polname
+                polname = _STACKING_POLNAME
             elif container_type in [
                 "draco.core.containers.PowerSpectrum2D",
                 "draco.core.containers.PowerSpectrum1D",
             ]:
-                polname = _ps_polname
+                polname = _PS_POLNAME
             else:
                 raise RuntimeError(
                     f"Container type of data argument ({container_type})"
@@ -219,9 +127,9 @@ def run_mcmc(
                 )
     else:
         if isinstance(data, containers.FrequencyStackByPol):
-            polname = _stacking_polname
+            polname = _STACKING_POLNAME
         else:
-            polname = _ps_polname
+            polname = _PS_POLNAME
 
     if pol_stokes:
         required_pol = [polname["I"], polname["Q"]]
@@ -401,9 +309,6 @@ def run_mcmc(
     Model = getattr(models, model_name)
     model = Model(seed=seed, force_real=force_real, **{**model_kwargs, **param_spec})
 
-    param_name = model.param_name
-    nparam = len(param_name)
-
     # Calculate the covariance over mocks
     cov_flat = utils.covariance(mock_meas.reshape(nmock, -1), corr=False)
     cov = utils.unravel_covariance(cov_flat, npol, nx)
@@ -557,10 +462,178 @@ def run_mcmc(
 
     model.set_data(**fit_kwargs)
 
+    return results, model, eval_kwargs, npol, nx
+
+
+def run_mcmc(
+    data,
+    mocks,
+    data_2d=None,
+    transfer=None,
+    template=None,
+    pol_fit="joint",
+    pol_stokes=False,
+    model_name="Exponential",
+    scale=1e6,
+    nwalker=32,
+    nsample=15000,
+    max_freq=None,
+    min_k=None,
+    max_k=None,
+    flag_before=True,
+    normalize_template=False,
+    mean_subtract=True,
+    recompute_weight=True,
+    model_kwargs=None,
+    param_spec=None,
+    seed=None,
+    flag_ind=None,
+    force_real=True,
+):
+    """Fit a model to the source stack or power spectrum using an MCMC.
+
+    Parameters
+    ----------
+    data : FrequencyStackByPol, PowerSpectrum1D, or str
+        Measurements of stacking or power spectrum.
+        This can either be a FrequencyStackByPol or PowerSpectrum1D
+        container, or the name of a file that holds such a container
+        and will be loaded from disk.
+    mocks : container, list of containers, str, or list of str
+        Mocks for estimating a noise covariance.
+        This can either be a MockFrequencyStackByPol or
+        MockPowerSpectrum1D container, a list of FrequencyStackByPol or
+        PowerSpectrum1D containers, or the name of a file or a list of
+        filenames that hold such containers and will be loaded from disk.
+    data_2d : PowerSpectrum2D or str
+        Measurements of 2d power spectrum, either as a PowerSpectrum2D
+        container or filename. When fitting to 1d power spectrum
+        measurements with a model that starts in 2d, weights and
+        (kpara,kperp) masking will be taken from here. Ignored if not
+        needed.
+    transfer : FrequencyStackByPol or str
+        The transfer function of the pipeline (only implemented for stacking).
+        The model for the stacked
+        signal will be convolved with the transfer function prior
+        to comparing to the data.  This can either be a
+        FrequencyStackByPol container or the name of a file that
+        holds such a container and will be loaded from disk.
+        If None, then a transfer function is not applied.  Default is None.
+    template : FrequencyStackByPol, PowerSpectrum1D, or str
+        Template for the stacked signal.  This can either be a
+        FrequencyStackByPol or PowerSpectrum1D container, or the name of
+        a file that holds such a container and will be loaded from disk.
+        Note that not all models require templates.  Default is None.
+    pol_fit : {"XX"|"YY"|"I"|"Q"|"joint"}
+        Polarisation to fit.  Here "I" refers to the weighted sum of the
+        "XX" and "YY" polarisations for stacking measurements and the
+        unweighted sum of "XX" and "YY" for power spectrum measurements.
+        "joint" refers to a simultaneous fit to the "XX" and "YY" or "I"
+        and "Q" polarisations.
+    pol_stokes : bool
+        If True, assume that all input files contain Stokes parameters
+        instead of instrumental polarisations. Default: False.
+    model_name : {"DeltaFunction"|"Exponential"|"ScaledShiftedTemplate"|
+                  "SimulationTemplate"|"SimulationTemplateFoG"|
+                  "SimulationTemplateFoGAltParam"|"AutoConstant"|
+                  "AutoSimulationTemplate2Dto1D"}
+        Name of the model to fit.  Specify the class name from the
+        fitstack.models module.
+    scale : float
+        All data will be scaled by this quantity.  Default is 1e6, under the
+        assumption that the signal in a stacking analysis is in units of Jy / beam
+        and we would like to convert to micro-Jy / beam.
+        Set to 1.0 if you do not want to scale the data.
+    nwalker : int
+        Number of walkers to use in the MCMC fit.  Default is 32.
+    nsample : int
+        Number of steps that each walker will take.  Default is 15000.
+    max_freq : float
+        The maximum frequency offset to include in a stacking fit.  If this None,
+        then all frequency offsets that are present in the data stack
+        will be included.  Default is None.
+    min_k, max_k : float
+        The minimum or maximum k values to include in a power spectrum fit.
+        Default is None.
+    flag_before : bool
+        Only relevant if max_freq, min_k, or max_k is not None.
+        The frequency offset flag will be applied prior to calculating the
+        inverse of the covariance matrix. Default is True.
+    normalize_template : bool
+        Divide the template by its maximum value prior to fitting.
+        Default is False.
+    mean_subtract : bool
+        Subtract the sample mean of the mocks from the data prior to fitting.
+        Default is True.
+    recompute_weight : bool
+        Set the weight dataset to the inverse variance over the mock catalogs
+        in a stacking analysis, or set the 1D `var` dataset to the variance over
+        the noise power spectra in a power spectrum analysis.
+        This is only used when averaging the "XX" and "YY" polarisations to
+        determine the "I" polarisation.  Otherwise whatever weight/var dataset
+        is saved to the file will be used.  Default is True.
+    param_spec : dict
+        Dictionary that specifies the prior distribution for each parameter.
+        See the docstring for the models.Model attribute for the correct format.
+    model_kwargs : dict
+        Dictionary that contains any keyword arguments that should be passed
+        to the model class at initialization.
+    seed : int
+        Seed to use for random number generation.  If the seed is not provided,
+        then a random seed will be taken from system entropy.
+    flag_ind : list
+        List of extra indices to flag. These are indices into the flattened data *after*
+        all other selections have been applied.
+    force_real : bool
+        Force input datasets to be real. Assumes that input datasets have
+        been previously examined to verify that imaginary parts are small and/or
+        unimportant. Default: True.
+
+    Returns
+    -------
+    results : MCMCFit
+        Container with the results of the fit, including
+        parameter chains, chi-squared chains, autocorrelation length,
+        acceptance franction, parameter percentiles, best-fit model,
+        and model percentiles.  Also includes all data products
+        and ancillary data products, as well as the covariance and
+        precision matrix inferred from the mocks.
+    """
+
+    # Initialize MCMCFit container for results, theory model, kwargs for
+    # model, and lengths of data to fit
+    results, model, eval_kwargs, npol, nx = initialize_mcmc_ingredients(
+        data,
+        mocks,
+        data_2d=data_2d,
+        transfer=transfer,
+        template=template,
+        pol_fit=pol_fit,
+        pol_stokes=pol_stokes,
+        model_name=model_name,
+        scale=scale,
+        nwalker=nwalker,
+        nsample=nsample,
+        max_freq=max_freq,
+        min_k=min_k,
+        max_k=max_k,
+        flag_before=flag_before,
+        normalize_template=normalize_template,
+        mean_subtract=mean_subtract,
+        recompute_weight=recompute_weight,
+        model_kwargs=model_kwargs,
+        param_spec=param_spec,
+        seed=seed,
+        flag_ind=flag_ind,
+        force_real=force_real,
+    )
+
     # Determine starting point for chains in parameter space
     pos = np.array([model.draw_random_parameters() for ww in range(nwalker)])
 
     nwalker, ndim = pos.shape
+
+    nparam = len(model.param_name)
 
     # Create the sampler and run the MCMC
     sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability_sampler)
