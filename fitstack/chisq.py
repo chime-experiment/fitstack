@@ -115,6 +115,7 @@ def powerspectrum1d_min_chisq_fit(
     model_kwargs=None,
     param_spec=None,
     param0=None,
+    extra_starts=0,
     method="L-BFGS-B",
     options=None,
     scale_bound=0.0,
@@ -147,6 +148,9 @@ def powerspectrum1d_min_chisq_fit(
     param0 : array_like, optional
         Starting guess for parameter values. If not set, determined from input chain.
         Default: None
+    extra_starts : int, optional
+        Also run the optimizer from this number of randomly-chosen points in parameter
+        space, and keep the best-fit point out of all the runs. Default: 0.
     method : str, optional
         Method for `scipy.optimize.minimize`. Default: L-BFGS-B.
     options : dict, optional
@@ -277,29 +281,63 @@ def powerspectrum1d_min_chisq_fit(
     else:
         param_bounds = None
 
-    # Minimize negative log-likelihood for fitting signal model to data
-    if signal_model.nfit == 1:
-        resd = scipy.optimize.minimize_scalar(
-            signal_model.negative_log_likelihood,
-            param0,
-            method="bounded",
-            bounds=[param_bounds.lb, param_bounds.ub],
-            options=options,
+    # Determine additional starting points for optimizer, based on Latin hypercube
+    # sampling of the parameter space
+    param0_points = [param0]
+    if extra_starts > 0:
+        # Initialize Latin hypercube sampler
+        sampler = scipy.stats.qmc.LatinHypercube(d=len(param0))
+        # Draw extra_starts d-dimensional samples from the unit Latin hypercube
+        other_param0 = sampler.random(extra_starts)
+        # Scale the samples to cover the desired parameter bounds
+        other_param0 = scipy.stats.qmc.scale(
+            other_param0, param_bounds.lb, param_bounds.ub
         )
-    else:
-        resd = scipy.optimize.minimize(
-            signal_model.negative_log_likelihood,
-            param0,
-            method=method,
-            bounds=param_bounds,
-            options=options,
-        )
+        # Make a list of param0 plus the other starting points
+        param0_points = np.concatenate([[param0], other_param0])
+
+    # Run minimizer for each starting point, saving run that yields lowest
+    # chi^2
+    for pi, params in enumerate(param0_points):
+        # Run minimizer
+        if signal_model.nfit == 1:
+            test_resd = scipy.optimize.minimize_scalar(
+                signal_model.negative_log_likelihood,
+                params,
+                method="bounded",
+                bounds=[param_bounds.lb, param_bounds.ub],
+                options=options,
+            )
+        else:
+            test_resd = scipy.optimize.minimize(
+                signal_model.negative_log_likelihood,
+                params,
+                method=method,
+                bounds=param_bounds,
+                options=options,
+            )
+
+        if pi == 0:
+            # Store results from first run. If success==False at this step
+            # and no other result is better, we'll keep this result.
+            bestfit_starting_point_idx = 0
+            resd = test_resd
+            bestfit_negloglike = signal_model.negative_log_likelihood(resd.x)
+        else:
+            # If this run succeeds and gets a lower chi^2 than the previous best
+            # run, update the best-run variables with this one
+            test_negloglike = signal_model.negative_log_likelihood(test_resd.x)
+            if test_resd["success"] and (test_negloglike < bestfit_negloglike):
+                bestfit_starting_point_idx = pi
+                resd = test_resd
+                bestfit_negloglike = test_negloglike
 
     # Save results, along with data itself, to output container
     out.attrs["data_signal_success"] = resd.success
     out.attrs["data_signal_chisq"] = 2.0 * signal_model.negative_log_likelihood(resd.x)
     out.attrs["data_signal_bestfit_param"] = resd.x
     out.attrs["data"] = fit_kwargs["data"][:]
+    out.attrs["data_bestfit_starting_point_idx"] = bestfit_starting_point_idx
 
     # Save chi^2 for null model and data
     out.attrs["data_null_chisq"] = 2.0 * null_model.negative_log_likelihood([])
@@ -309,6 +347,9 @@ def powerspectrum1d_min_chisq_fit(
     chisq_null = out["chisq_null"][:].view(np.ndarray)
     chisq_signal = out["chisq_signal"][:].view(np.ndarray)
     bestfit_param = out["bestfit_param"][:].view(np.ndarray)
+    mock_bestfit_starting_point_idx = out["mock_bestfit_starting_point_idx"][:].view(
+        np.ndarray
+    )
 
     if save_bestfit_models:
         # Save best-fit model prediction for data
@@ -339,25 +380,44 @@ def powerspectrum1d_min_chisq_fit(
 
         # Minimize negative log-likelihood for fitting signal model to mock data,
         # and save results
-        if signal_model.nfit == 1:
-            resd = scipy.optimize.minimize_scalar(
-                signal_model.negative_log_likelihood,
-                param0,
-                method="bounded",
-                bounds=[param_bounds.lb, param_bounds.ub],
-                options=options,
-            )
-        else:
-            resd = scipy.optimize.minimize(
-                signal_model.negative_log_likelihood,
-                param0,
-                method=method,
-                bounds=param_bounds,
-                options=options,
-            )
+        for pi, params in enumerate(param0_points):
+            # Run minimizer
+            if signal_model.nfit == 1:
+                test_resd = scipy.optimize.minimize_scalar(
+                    signal_model.negative_log_likelihood,
+                    params,
+                    method="bounded",
+                    bounds=[param_bounds.lb, param_bounds.ub],
+                    options=options,
+                )
+            else:
+                test_resd = scipy.optimize.minimize(
+                    signal_model.negative_log_likelihood,
+                    params,
+                    method=method,
+                    bounds=param_bounds,
+                    options=options,
+                )
+
+            if pi == 0:
+                # Store results from first run. If success==False at this step
+                # and no other result is better, we'll keep this result.
+                bestfit_starting_point_idx = 0
+                resd = test_resd
+                bestfit_negloglike = signal_model.negative_log_likelihood(resd.x)
+            else:
+                # If this run succeeds and gets a lower chi^2 than the previous best
+                # run, update the best-run variables with this one
+                test_negloglike = signal_model.negative_log_likelihood(test_resd.x)
+                if test_resd["success"] and (test_negloglike < bestfit_negloglike):
+                    bestfit_starting_point_idx = pi
+                    resd = test_resd
+                    bestfit_negloglike = test_negloglike
+
         success[mm] = resd.success
         chisq_signal[mm] = 2.0 * signal_model.negative_log_likelihood(resd.x)
         bestfit_param[mm] = resd.x
+        mock_bestfit_starting_point_idx[mm] = bestfit_starting_point_idx
 
         if save_bestfit_models:
             out.datasets["mock_bestfit_models"][mm] = signal_model.model(
@@ -402,6 +462,7 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     model_kwargs = config.Property(proptype=dict)
     param_spec = config.Property(proptype=dict)
     param0 = config.Property(proptype=list)
+    extra_starts = config.Property(proptype=int)
     method = config.Property(proptype=str)
     options = config.Property(proptype=dict)
     scale_bound = config.Property(proptype=float)
