@@ -490,6 +490,12 @@ class ChisqPowerSpectrum1D(ContainerBase):
             "initialise": True,
             "distributed": False,
         },
+        "mock_bestfit_starting_point_idx": {
+            "axes": ["mock"],
+            "dtype": int,
+            "initialise": True,
+            "distributed": False,
+        },
         "bestfit_param": {
             "axes": ["mock", "param"],
             "dtype": np.float64,
