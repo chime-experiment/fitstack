@@ -85,6 +85,7 @@ def initialize_mcmc_ingredients(
     param_spec=None,
     seed=None,
     flag_ind=None,
+    hartlap=True,
     force_real=True,
 ):
     """Initialize ingredients for MCMC.
@@ -420,6 +421,10 @@ def initialize_mcmc_ingredients(
 
     Cinvfit = np.linalg.pinv(C)
 
+    # Compute and apply the Hartlap factor to the inverse covariance
+    if hartlap:
+        Cinvfit *= (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+
     if not flag_before:
         Cinvfit = Cinvfit[ifit][:, ifit]
 
@@ -488,6 +493,7 @@ def run_mcmc(
     param_spec=None,
     seed=None,
     flag_ind=None,
+    hartlap=True,
     force_real=True,
 ):
     """Fit a model to the source stack or power spectrum using an MCMC.
@@ -584,6 +590,9 @@ def run_mcmc(
     flag_ind : list
         List of extra indices to flag. These are indices into the flattened data *after*
         all other selections have been applied.
+    hartlap : bool
+        Apply the Hartlap factor to the inverse covariance computed from mocks.
+        Default: True.
     force_real : bool
         Force input datasets to be real. Assumes that input datasets have
         been previously examined to verify that imaginary parts are small and/or
@@ -625,6 +634,7 @@ def run_mcmc(
         param_spec=param_spec,
         seed=seed,
         flag_ind=flag_ind,
+        hartlap=hartlap,
         force_real=force_real,
     )
 
@@ -743,6 +753,7 @@ class RunMCMC(task.SingleTask):
     model_kwargs = config.Property(proptype=dict)
     seed = config.Property(proptype=int)
     flag_ind = config.list_type(type_=int)
+    hartlap = config.Property(proptype=bool)
 
     force_real = config.Property(proptype=bool)
 
