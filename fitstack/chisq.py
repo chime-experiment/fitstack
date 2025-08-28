@@ -13,6 +13,7 @@ from . import containers
 from . import utils
 from . import models
 from . import priors
+from .mcmc import _PS_POLNAME
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -109,6 +110,73 @@ def get_bounds(mdl, scale_bound=0.0):
     return scipy.optimize.Bounds(lb, ub)
 
 
+def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
+    """Compute leave-one-out inverse covariance from mocks.
+
+    This routine computes the inverse covariance from all mocks
+    except the one specified by index iLOO.
+
+    Parameters
+    ----------
+    mocks : np.ndarray[nmock, npol, nk]
+        Array of mocks
+    iLOO : int
+        Index of mock to leave out.
+    fit_cont : containers.MCMCFitPowerSpectrum1D
+        Container that mocks came from, which other metadata will
+        be drawn from.
+    hartlap : bool, optional
+        Apply the Hartlap factor to the inverse covariance.
+        Default: True
+
+    Returns
+    -------
+    Cinv : np.ndarray[npol*nk, npol*nk]
+        Inverse covariance.
+    """
+
+    nmock, npol, nx = mocks.shape
+    nmock -= 1
+
+    # Get quantities for constructing inverse covariance
+    pol_fit = fit_cont.attrs["pol_fit"]
+    ipol = fit_cont.attrs["pol_sel"]
+    ifit = fit_cont.attrs["ifit"]
+    flag_before = fit_cont.attrs["flag_before"]
+
+    # Compute covariance
+    cov_flat = utils.covariance(
+        np.delete(mocks, iLOO, axis=0).reshape(nmock, -1), corr=False
+    )
+    cov = utils.unravel_covariance(cov_flat, npol, nx)
+
+    # Determine the polarizations to fit
+    if pol_fit in _PS_POLNAME.keys():
+        C = cov[ipol, ipol]
+    elif pol_fit == "joint":
+        C = utils.ravel_covariance(cov[ipol][:, ipol])
+
+    # Invert the covariance matrix to obtain the precision matrix
+    Cinv = np.zeros_like(C)
+
+    if flag_before:
+        C = C[ifit][:, ifit]
+
+    Cinvfit = np.linalg.pinv(C)
+
+    # Compute and apply the Hartlap factor to the inverse covariance
+    if hartlap:
+        Cinvfit *= (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+
+    if not flag_before:
+        Cinvfit = Cinvfit[ifit][:, ifit]
+
+    for ii, oi in enumerate(ifit):
+        Cinv[oi, ifit] = Cinvfit[ii, :]
+
+    return Cinv
+
+
 def powerspectrum1d_min_chisq_fit(
     mcmcfit_cont,
     mcmcfit_cont_for_mocks=None,
@@ -122,6 +190,8 @@ def powerspectrum1d_min_chisq_fit(
     force_real=True,
     add_mock_to_data=None,
     save_bestfit_models=False,
+    use_LOO_covariance=False,
+    use_LOO_hartlap=True,
     verbose_notebook=False,
 ):
     """Compute the minimum chi^2 for 1d power spectrum data and mocks.
@@ -168,6 +238,10 @@ def powerspectrum1d_min_chisq_fit(
     save_bestfit_models : bool, optional
         Whether to save best-fit model evaluations for data and each mock, as
         datasets in output container. Default: False.
+    use_LOO_covariance : bool, optional
+        If True, use leave-one-out covariance for each mock. Default: False.
+    use_LOO_hartlap : bool, optional
+        Apply Hartlap factor to LOO inverse-covariance. Default: True.
     verbose_notebook : bool, optional
         Whether to print status updates when evaluating in a jupyter notebook,
         using the `tqdm` package. Ignored if `tqdm` is not installed.
@@ -375,6 +449,10 @@ def powerspectrum1d_min_chisq_fit(
 
         # Update models to consider mock data
         fit_kwargs["data"] = _re(mock_data[mm])
+        if use_LOO_covariance:
+            fit_kwargs["inv_cov"] = get_powerspectrum1d_LOO_invcovariance(
+                mock_data, mm, fit_cont_for_mocks, hartlap=use_LOO_hartlap
+            )
         signal_model.set_data(**fit_kwargs)
         null_model.set_data(**fit_kwargs)
 
@@ -469,6 +547,8 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     force_real = config.Property(proptype=bool)
     add_mock_to_data = config.Property(proptype=int)
     save_bestfit_models = config.Property(proptype=bool)
+    use_LOO_covariance = config.Property(proptype=bool)
+    use_LOO_hartlap = config.Property(proptype=bool)
 
     def setup(self):
         """Prepare all arguments for the powerspectrum1d_min_chisq_fit method."""
