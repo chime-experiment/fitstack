@@ -592,3 +592,52 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
         )
 
         return out
+
+
+class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
+    """Calls the powerspectrum1d_min_chisq_fit with split-mock approach.
+
+    This task takes two input containers: the first one determines most
+    aspects of the procedure, while the second one only provides the mocks
+    that will be used for fitting. This allows for the inverse covariance
+    to be generated from a different set of mocks than the set used for
+    fitting.
+    """
+
+    model_kwargs = config.Property(proptype=dict)
+    param_spec = config.Property(proptype=dict)
+    param0 = config.Property(proptype=list)
+    extra_starts = config.Property(proptype=int)
+    method = config.Property(proptype=str)
+    options = config.Property(proptype=dict)
+    scale_bound = config.Property(proptype=float)
+    force_real = config.Property(proptype=bool)
+    add_mock_to_data = config.Property(proptype=int)
+    save_bestfit_models = config.Property(proptype=bool)
+    use_LOO_covariance = config.Property(proptype=bool)
+    use_LOO_hartlap = config.Property(proptype=bool)
+
+    def process(self, mcmcfit_cont, mcmcfit_cont_for_mocks):
+        """Run the chi^2 minimization.
+
+        Parameters
+        ----------
+        mcmcfit_cont : containers.MCMCFitPowerSpectrum1D
+            Container with information about data, mocks used for
+            covariance computation, covariance, and signal model.
+        mcmcfit_cont_for_mocks : containers.MCMCFitPowerSpectrum1D
+            Container with mocked to be used for fitting.
+
+        Returns
+        -------
+        out : containers.ChisqPowerSpectrum1D
+            Container containing chi^2 results and associated information.
+        """
+        out = powerspectrum1d_min_chisq_fit(
+            mcmcfit_cont,
+            mcmcfit_cont_for_mocks=mcmcfit_cont_for_mocks,
+            verbose_notebook=False,
+            **self.kwargs,
+        )
+
+        return out
