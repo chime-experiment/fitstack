@@ -222,7 +222,7 @@ class MCMCFit(ContainerBase):
         },
         "fixed": {
             "axes": ["param"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
@@ -341,13 +341,13 @@ class MCMCFit1D(MCMCFit, StackSet1D):
         },
         "freq_flag": {
             "axes": ["freq"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
         "flag": {
             "axes": ["x"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
@@ -430,13 +430,13 @@ class MCMCFitPowerSpectrum1D(MCMCFit, PowerSpectrumSet1D):
         },
         "k_flag": {
             "axes": ["k"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
         "flag": {
             "axes": ["x"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
