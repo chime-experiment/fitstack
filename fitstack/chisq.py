@@ -192,6 +192,7 @@ def powerspectrum1d_min_chisq_fit(
     save_bestfit_models=False,
     use_LOO_covariance=False,
     use_LOO_hartlap=True,
+    seed=0,
     verbose_notebook=False,
 ):
     """Compute the minimum chi^2 for 1d power spectrum data and mocks.
@@ -242,6 +243,8 @@ def powerspectrum1d_min_chisq_fit(
         If True, use leave-one-out covariance for each mock. Default: False.
     use_LOO_hartlap : bool, optional
         Apply Hartlap factor to LOO inverse-covariance. Default: True.
+    seed : int, optional
+        Random seed for generating starting points for optimizer. Default: 0.
     verbose_notebook : bool, optional
         Whether to print status updates when evaluating in a jupyter notebook,
         using the `tqdm` package. Ignored if `tqdm` is not installed.
@@ -360,7 +363,8 @@ def powerspectrum1d_min_chisq_fit(
     param0_points = [param0]
     if extra_starts > 0:
         # Initialize Latin hypercube sampler
-        sampler = scipy.stats.qmc.LatinHypercube(d=len(param0))
+        rng = np.random.default_rng(seed=seed)
+        sampler = scipy.stats.qmc.LatinHypercube(d=len(param0), rng=rng)
         # Draw extra_starts d-dimensional samples from the unit Latin hypercube
         other_param0 = sampler.random(extra_starts)
         # Scale the samples to cover the desired parameter bounds
@@ -520,6 +524,7 @@ def powerspectrum1d_min_chisq_fit(
     out.attrs["data_nsigmas"] = data_nsigmas
 
     out.attrs["param0_points"] = param0_points
+    out.attrs["seed"] = seed
 
     # Return the output container
     return out
@@ -549,6 +554,7 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
+    seed = config.Property(proptype=int)
 
     def setup(self):
         """Prepare all arguments for the powerspectrum1d_min_chisq_fit method."""
@@ -616,6 +622,7 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
+    seed = config.Property(proptype=int)
 
     def process(self, mcmcfit_cont, mcmcfit_cont_for_mocks):
         """Run the chi^2 minimization.
