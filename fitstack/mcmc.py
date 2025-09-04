@@ -646,6 +646,10 @@ def run_mcmc(
         force_real=force_real,
     )
 
+    # Set seed for emcee
+    if seed is not None:
+        np.random.seed(seed)
+
     # Determine starting point for chains in parameter space
     pos = np.array([model.draw_random_parameters() for ww in range(nwalker)])
 
