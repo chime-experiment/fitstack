@@ -1128,7 +1128,9 @@ class AutoSignalTemplate1DFoG(AutoSignalTemplate1D):
     def rescale_templates(self, signal: np.ndarray, **kwargs) -> np.ndarray:
         """Rescale alphaFoG=1 templates to different values."""
 
-        alpha = kwargs[kwargs["alpha_par"]]
+        # FoG kernel only depends on alpha^2, so we force alpha<0 values
+        # to evaluate the splines at |alpha|
+        alpha = np.abs(kwargs[kwargs["alpha_par"]])
         template = kwargs["template"]
 
         # Apply amplitude rescaling
