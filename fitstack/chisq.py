@@ -177,6 +177,177 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     return Cinv
 
 
+def initialize_powerspectrum1d_min_chisq_ingredients(
+    mcmcfit_cont,
+    mcmcfit_cont_for_mocks=None,
+    model_kwargs=None,
+    param_spec=None,
+    param0=None,
+    extra_starts=0,
+    bounded=True,
+    scale_bound=0.0,
+    force_real=True,
+    add_mock_to_data=None,
+    initialize_with_mock=None,
+    seed=0,
+):
+    """Prepare parameters and data structures for chi^2 minimization.
+
+    See docstring of `powerspectrum1d_min_chisq_fit()` for parameter
+    definitions, except `initialize_with_mock`, which is either an 
+    integer denoting the index of a mock with which to initialize
+    the signal model, or `None` if the model is to be initialized
+    with the data.
+
+    Returns
+    -------
+    signal_model : models.Model
+        Signal model.
+    null_model : models.NullModel
+        No-signal model.
+    mock_data : np.ndarray[nmock,npol,nk]
+        Array of noise mocks.
+    fit_kwargs : dict
+        kwargs for signal model.
+    param0_points : np.ndarray[npoint,nparam]
+        Array of random starting points in parameter space.
+    param_bounds : scipy.optimize.Bounds
+        Bounds for each parameter.
+    fit_cont_for_mocks : containers.MCMCFitPowerSpectrum1D
+        Container containing mocks.
+    out : containers.ChisqPowerSpectrum1D
+        Container to store chi^2 results and associated information.
+    """
+
+    def _re(x):
+        return np.real(x) if force_real else x
+
+    if model_kwargs is None:
+        model_kwargs = {}
+
+    if param_spec is None:
+        param_spec = {}
+
+    # Load MCMCFitPowerSpectrum1D container
+    if isinstance(mcmcfit_cont, str):
+        fit_cont = containers.MCMCFitPowerSpectrum1D.from_file(
+            utils.find_file(mcmcfit_cont)
+        )
+    else:
+        fit_cont = mcmcfit_cont
+
+    # Load separate MCMCFitPowerSpectrum1D container with mocks, if specified
+    if mcmcfit_cont_for_mocks is None:
+        fit_cont_for_mocks = fit_cont
+    else:
+        if isinstance(mcmcfit_cont_for_mocks, str):
+            fit_cont_for_mocks = containers.MCMCFitPowerSpectrum1D.from_file(
+                utils.find_file(mcmcfit_cont_for_mocks)
+            )
+        else:
+            fit_cont_for_mocks = mcmcfit_cont_for_mocks
+
+    # Get polarizations from input container
+    pol = fit_cont.index_map["pol"]
+    pol_fit = fit_cont.attrs["pol_fit"]
+    if pol_fit == "joint":
+        ipol = np.arange(len(pol))
+    else:
+        ipol = list(pol).index(fit_cont.attrs["pol_fit"])
+        if isinstance(ipol, int):
+            ipol = [ipol]
+
+    # Get mocks from MCMCFitPowerSpectrum1D container
+    mock_data = fit_cont_for_mocks["mock"][:, ipol]
+    nmock, _, nk = mock_data.shape
+
+    # Set quantities needed for model evaluation
+    model_kwargs["combine"] = False
+    input_model_kwargs = fit_cont.attrs["model_kwargs"]
+    for key in input_model_kwargs.keys():
+        if key not in model_kwargs.keys():
+            model_kwargs[key] = input_model_kwargs[key]
+
+    # Set quantities needed for fit to data
+    fit_kwargs = {}
+    fit_kwargs["k1D"] = fit_cont.k1D
+    fit_kwargs["inv_cov"] = fit_cont["precision"][:]
+    fit_kwargs["transfer"] = None
+    fit_kwargs["pol_sel"] = ipol
+
+    # Set data to fit to
+    if initialize_with_mock is None:
+        fit_kwargs["data"] = (
+            _re(fit_cont.spectrum.data.local_array[ipol])
+            if type(fit_cont.spectrum.data) is mpiarray.MPIArray
+            else _re(fit_cont.spectrum.data[ipol])
+        )
+        # If desired, add one of the mocks to the data
+        if add_mock_to_data is not None:
+            fit_kwargs["data"][:] += mock_data[add_mock_to_data][:]
+    else:
+        fit_kwargs["data"] = _re(mock_data[initialize_with_mock])
+
+    # Set parameter priors
+    input_param_spec = fit_cont.attrs["param_spec"]
+    for key in input_param_spec.keys():
+        if key not in param_spec.keys():
+            param_spec[key] = input_param_spec[key]
+
+    # Initialize signal model, based on name stored in
+    # MCMCFitPowerSpectrum1D container
+    signal_model_name = fit_cont.attrs["model"]
+    signal_model_class = getattr(models, signal_model_name)
+    signal_model = signal_model_class(**{**model_kwargs, **param_spec})
+    signal_model.set_data(**fit_kwargs)
+
+    # Initialize null model
+    null_model = models.NullModel(**model_kwargs)
+    null_model.set_data(**fit_kwargs)
+
+    # Determine initial guess for parameter values, and parameter bounds (if needed)
+    if param0 is None:
+        param0 = get_param0(fit_cont, signal_model.param_name_fit)
+    if bounded:
+        param_bounds = get_bounds(signal_model, scale_bound=scale_bound)
+    else:
+        param_bounds = None
+
+    # Determine additional starting points for optimizer, based on Latin hypercube
+    # sampling of the parameter space
+    param0_points = [param0]
+    if extra_starts > 0:
+        # Initialize Latin hypercube sampler
+        sampler = scipy.stats.qmc.LatinHypercube(d=len(param0), seed=seed)
+        # Draw extra_starts d-dimensional samples from the unit Latin hypercube
+        other_param0 = sampler.random(extra_starts)
+        # Scale the samples to cover the desired parameter bounds
+        other_param0 = scipy.stats.qmc.scale(
+            other_param0, param_bounds.lb, param_bounds.ub
+        )
+        # Make a list of param0 plus the other starting points
+        param0_points = np.concatenate([[param0], other_param0])
+
+    # Create container for results
+    out = containers.ChisqPowerSpectrum1D(
+        mock=np.arange(nmock, dtype=int),
+        param=np.array(signal_model.param_name_fit),
+        pol=np.array(pol)[ipol],
+        k=nk,
+    )
+
+    return (
+        signal_model,
+        null_model,
+        mock_data,
+        fit_kwargs,
+        param0_points,
+        param_bounds,
+        fit_cont_for_mocks,
+        out,
+    )
+
+
 def powerspectrum1d_min_chisq_fit(
     mcmcfit_cont,
     mcmcfit_cont_for_mocks=None,
@@ -259,141 +430,45 @@ def powerspectrum1d_min_chisq_fit(
     def _re(x):
         return np.real(x) if force_real else x
 
-    if model_kwargs is None:
-        model_kwargs = {}
-
-    if param_spec is None:
-        param_spec = {}
-
     if options is None:
         options = {}
 
-    # Load MCMCFitPowerSpectrum1D container
-    if isinstance(mcmcfit_cont, str):
-        fit_cont = containers.MCMCFitPowerSpectrum1D.from_file(
-            utils.find_file(mcmcfit_cont)
-        )
-    else:
-        fit_cont = mcmcfit_cont
-
-    # Load separate MCMCFitPowerSpectrum1D container with mocks, if specified
-    if mcmcfit_cont_for_mocks is None:
-        fit_cont_for_mocks = fit_cont
-    else:
-        if isinstance(mcmcfit_cont_for_mocks, str):
-            fit_cont_for_mocks = containers.MCMCFitPowerSpectrum1D.from_file(
-                utils.find_file(mcmcfit_cont_for_mocks)
-            )
-        else:
-            fit_cont_for_mocks = mcmcfit_cont_for_mocks
-
-    # Get polarizations from input container
-    pol = fit_cont.index_map["pol"]
-    pol_fit = fit_cont.attrs["pol_fit"]
-    if pol_fit == "joint":
-        ipol = np.arange(len(pol))
-    else:
-        ipol = list(pol).index(fit_cont.attrs["pol_fit"])
-        if isinstance(ipol, int):
-            ipol = [ipol]
-
-    # Set quantities needed for model evaluation
-    model_kwargs["combine"] = False
-    input_model_kwargs = fit_cont.attrs["model_kwargs"]
-    for key in input_model_kwargs.keys():
-        if key not in model_kwargs.keys():
-            model_kwargs[key] = input_model_kwargs[key]
-
-    # Set quantities needed for fit to data
-    fit_kwargs = {}
-    fit_kwargs["k1D"] = fit_cont.k1D
-    fit_kwargs["data"] = (
-        _re(fit_cont.spectrum.data.local_array[ipol])
-        if type(fit_cont.spectrum.data) is mpiarray.MPIArray
-        else _re(fit_cont.spectrum.data[ipol])
-    )
-    fit_kwargs["inv_cov"] = fit_cont["precision"][:]
-    fit_kwargs["transfer"] = None
-    fit_kwargs["pol_sel"] = ipol
-
-    # Set parameter priors
-    input_param_spec = fit_cont.attrs["param_spec"]
-    for key in input_param_spec.keys():
-        if key not in param_spec.keys():
-            param_spec[key] = input_param_spec[key]
-
-    # Initialize signal model, based on name stored in
-    # MCMCFitPowerSpectrum1D container
-    signal_model_name = fit_cont.attrs["model"]
-    signal_model_class = getattr(models, signal_model_name)
-    signal_model = signal_model_class(**{**model_kwargs, **param_spec})
-    signal_model.set_data(**fit_kwargs)
-
-    # Initialize null model
-    null_model = models.NullModel(**model_kwargs)
-    null_model.set_data(**fit_kwargs)
-
-    # Get mocks from MCMCFitPowerSpectrum1D container
-    mock_data = fit_cont_for_mocks["mock"][:, ipol]
-    nmock, npol, nk = mock_data.shape
-
-    # If desired, add one of the mocks to the data
-    if add_mock_to_data is not None:
-        fit_kwargs["data"][:] += mock_data[add_mock_to_data][:]
-        signal_model.set_data(**fit_kwargs)
-
-    # Create container for results
-    out = containers.ChisqPowerSpectrum1D(
-        mock=np.arange(nmock, dtype=int),
-        param=np.array(signal_model.param_name_fit),
-        pol=np.array(pol)[ipol],
-        k=nk,
+    (
+        signal_model,
+        null_model,
+        mock_data,
+        fit_kwargs,
+        param0_points,
+        param_bounds,
+        fit_cont_for_mocks,
+        out,
+    ) = initialize_powerspectrum1d_min_chisq_ingredients(
+        mcmcfit_cont,
+        mcmcfit_cont_for_mocks=mcmcfit_cont_for_mocks,
+        model_kwargs=model_kwargs,
+        param_spec=param_spec,
+        param0=param0,
+        extra_starts=extra_starts,
+        bounded=method in BOUNDED_MINIMIZATION,
+        scale_bound=scale_bound,
+        force_real=force_real,
+        add_mock_to_data=add_mock_to_data,
+        initialize_with_mock=None,
+        seed=seed,
     )
 
-    # Determine initial guess for parameter values, and parameter bounds (if needed)
-    if param0 is None:
-        param0 = get_param0(fit_cont, signal_model.param_name_fit)
-    if method in BOUNDED_MINIMIZATION:
-        param_bounds = get_bounds(signal_model, scale_bound=scale_bound)
-    else:
-        param_bounds = None
-
-    # Determine additional starting points for optimizer, based on Latin hypercube
-    # sampling of the parameter space
-    param0_points = [param0]
-    if extra_starts > 0:
-        # Initialize Latin hypercube sampler
-        rng = np.random.default_rng(seed=seed)
-        sampler = scipy.stats.qmc.LatinHypercube(d=len(param0), rng=rng)
-        # Draw extra_starts d-dimensional samples from the unit Latin hypercube
-        other_param0 = sampler.random(extra_starts)
-        # Scale the samples to cover the desired parameter bounds
-        other_param0 = scipy.stats.qmc.scale(
-            other_param0, param_bounds.lb, param_bounds.ub
-        )
-        # Make a list of param0 plus the other starting points
-        param0_points = np.concatenate([[param0], other_param0])
+    nmock, _, _ = mock_data.shape
 
     # Run minimizer for each starting point, saving run that yields lowest
     # chi^2
     for pi, params in enumerate(param0_points):
-        # Run minimizer
-        if signal_model.nfit == 1:
-            test_resd = scipy.optimize.minimize_scalar(
-                signal_model.negative_log_likelihood,
-                params,
-                method="bounded",
-                bounds=[param_bounds.lb, param_bounds.ub],
-                options=options,
-            )
-        else:
-            test_resd = scipy.optimize.minimize(
-                signal_model.negative_log_likelihood,
-                params,
-                method=method,
-                bounds=param_bounds,
-                options=options,
-            )
+        test_resd = scipy.optimize.minimize(
+            signal_model.negative_log_likelihood,
+            params,
+            method=method,
+            bounds=param_bounds,
+            options=options,
+        )
 
         if pi == 0:
             # Store results from first run. If success==False at this step
@@ -463,23 +538,13 @@ def powerspectrum1d_min_chisq_fit(
         # Minimize negative log-likelihood for fitting signal model to mock data,
         # and save results
         for pi, params in enumerate(param0_points):
-            # Run minimizer
-            if signal_model.nfit == 1:
-                test_resd = scipy.optimize.minimize_scalar(
-                    signal_model.negative_log_likelihood,
-                    params,
-                    method="bounded",
-                    bounds=[param_bounds.lb, param_bounds.ub],
-                    options=options,
-                )
-            else:
-                test_resd = scipy.optimize.minimize(
-                    signal_model.negative_log_likelihood,
-                    params,
-                    method=method,
-                    bounds=param_bounds,
-                    options=options,
-                )
+            test_resd = scipy.optimize.minimize(
+                signal_model.negative_log_likelihood,
+                params,
+                method=method,
+                bounds=param_bounds,
+                options=options,
+            )
 
             if pi == 0:
                 # Store results from first run. If success==False at this step
