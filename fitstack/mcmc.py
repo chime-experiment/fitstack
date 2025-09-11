@@ -423,7 +423,10 @@ def initialize_mcmc_ingredients(
 
     # Compute and apply the Hartlap factor to the inverse covariance
     if hartlap:
-        Cinvfit *= (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+        hartlap_factor = (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+        Cinvfit *= hartlap_factor
+    else:
+        hartlap_factor = 1.0
 
     if not flag_before:
         Cinvfit = Cinvfit[ifit][:, ifit]
@@ -461,9 +464,14 @@ def initialize_mcmc_ingredients(
         fit_kwargs["pol_sel"] = ipol
         eval_kwargs["pol_sel"] = slice(None)
 
-    # Save model_kwargs and param_spec to results container for later reference
+    # Save model_kwargs, param_spec, and a few other quantities
+    # to results container for later reference
     results.attrs["model_kwargs"] = model_kwargs
     results.attrs["param_spec"] = param_spec
+    results.attrs["pol_sel"] = ipol
+    results.attrs["ifit"] = ifit
+    results.attrs["flag_before"] = flag_before
+    results.attrs["hartlap_factor"] = hartlap_factor
 
     model.set_data(**fit_kwargs)
 
