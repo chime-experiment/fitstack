@@ -1260,6 +1260,9 @@ class AutoSimulationTemplate1D_Omega2(AutoSimulationTemplate1D):
             Model for the signal.
         """
 
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
         param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
         omega2 = param_dict.pop("omega^2")
