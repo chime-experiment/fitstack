@@ -184,6 +184,8 @@ def initialize_powerspectrum1d_min_chisq_ingredients(
     param_spec=None,
     param0=None,
     extra_starts=0,
+    extra_start_log_bounds=None,
+    extra_start_log_samplenegative=True,
     bounded=True,
     scale_bound=0.0,
     force_real=True,
@@ -194,7 +196,7 @@ def initialize_powerspectrum1d_min_chisq_ingredients(
     """Prepare parameters and data structures for chi^2 minimization.
 
     See docstring of `powerspectrum1d_min_chisq_fit()` for parameter
-    definitions, except `initialize_with_mock`, which is either an 
+    definitions, except `initialize_with_mock`, which is either an
     integer denoting the index of a mock with which to initialize
     the signal model, or `None` if the model is to be initialized
     with the data.
@@ -308,10 +310,7 @@ def initialize_powerspectrum1d_min_chisq_ingredients(
     # Determine initial guess for parameter values, and parameter bounds (if needed)
     if param0 is None:
         param0 = get_param0(fit_cont, signal_model.param_name_fit)
-    if bounded:
-        param_bounds = get_bounds(signal_model, scale_bound=scale_bound)
-    else:
-        param_bounds = None
+    param_bounds = get_bounds(signal_model, scale_bound=scale_bound)
 
     # Determine additional starting points for optimizer, based on Latin hypercube
     # sampling of the parameter space
@@ -322,11 +321,31 @@ def initialize_powerspectrum1d_min_chisq_ingredients(
         # Draw extra_starts d-dimensional samples from the unit Latin hypercube
         other_param0 = sampler.random(extra_starts)
         # Scale the samples to cover the desired parameter bounds
-        other_param0 = scipy.stats.qmc.scale(
-            other_param0, param_bounds.lb, param_bounds.ub
-        )
+        if extra_start_log_bounds is None:
+            other_param0 = scipy.stats.qmc.scale(
+                other_param0, param_bounds.lb, param_bounds.ub
+            )
+        else:
+            extra_start_log_bounds = np.asarray(extra_start_log_bounds)
+            if extra_start_log_bounds.shape != (len(param0), 2):
+                raise RuntimeError(
+                    "extra_start_log_bounds must have shape (nparam, 2))"
+                )
+            other_param0 = scipy.stats.qmc.scale(
+                other_param0,
+                extra_start_log_bounds[:, 0],
+                extra_start_log_bounds[:, 1],
+            )
+            other_param0 = 10.0**other_param0
+            if extra_start_log_samplenegative:
+                rng = np.random.default_rng(seed=seed)
+                other_param0 *= rng.choice([1.0, -1.0], size=other_param0.shape)
+
         # Make a list of param0 plus the other starting points
         param0_points = np.concatenate([[param0], other_param0])
+
+    if not bounded:
+        param_bounds = None
 
     # Create container for results
     out = containers.ChisqPowerSpectrum1D(
@@ -355,6 +374,8 @@ def powerspectrum1d_min_chisq_fit(
     param_spec=None,
     param0=None,
     extra_starts=0,
+    extra_start_log_bounds=None,
+    extra_start_log_samplenegative=True,
     method="L-BFGS-B",
     options=None,
     scale_bound=0.0,
@@ -393,6 +414,16 @@ def powerspectrum1d_min_chisq_fit(
     extra_starts : int, optional
         Also run the optimizer from this number of randomly-chosen points in parameter
         space, and keep the best-fit point out of all the runs. Default: 0.
+    extra_start_log_bounds : np.ndarray[nparam, 2], optional
+        If specified, `extra_starts` points in parameter space will be randomly chosen
+        in log(parameter), with lower and upper log bounds specified by each column of
+        this array (e.g. [[-2, 6], [-2, 2]] chooses points with log10(param1) between 
+        -2 and 6, and log10(param2) between -2 and 2). Default: None.
+    extra_start_log_samplenegative : bool, optional
+        If sampling starting points in log, randomly choose the sign of each parameter
+        for each starting point. This allows for both positive and negative parameter
+        values to be sampled, with absolute values with a specified log range.
+        Default: True.
     method : str, optional
         Method for `scipy.optimize.minimize`. Default: L-BFGS-B.
     options : dict, optional
@@ -449,6 +480,8 @@ def powerspectrum1d_min_chisq_fit(
         param_spec=param_spec,
         param0=param0,
         extra_starts=extra_starts,
+        extra_start_log_bounds=extra_start_log_bounds,
+        extra_start_log_samplenegative=extra_start_log_samplenegative,
         bounded=method in BOUNDED_MINIMIZATION,
         scale_bound=scale_bound,
         force_real=force_real,
@@ -611,6 +644,8 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     param_spec = config.Property(proptype=dict)
     param0 = config.Property(proptype=list)
     extra_starts = config.Property(proptype=int)
+    extra_start_log_bounds = config.Property(proptype=list)
+    extra_start_log_samplenegative = config.Property(proptype=bool)
     method = config.Property(proptype=str)
     options = config.Property(proptype=dict)
     scale_bound = config.Property(proptype=float)
@@ -679,6 +714,8 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     param_spec = config.Property(proptype=dict)
     param0 = config.Property(proptype=list)
     extra_starts = config.Property(proptype=int)
+    extra_start_log_bounds = config.Property(proptype=list)
+    extra_start_log_samplenegative = config.Property(proptype=bool)
     method = config.Property(proptype=str)
     options = config.Property(proptype=dict)
     scale_bound = config.Property(proptype=float)
