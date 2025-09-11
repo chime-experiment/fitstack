@@ -151,7 +151,7 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     cov = utils.unravel_covariance(cov_flat, npol, nx)
 
     # Determine the polarizations to fit
-    if pol_fit in _PS_POLNAME.keys():
+    if pol_fit in _PS_POLNAME.values():
         C = cov[ipol, ipol]
     elif pol_fit == "joint":
         C = utils.ravel_covariance(cov[ipol][:, ipol])
