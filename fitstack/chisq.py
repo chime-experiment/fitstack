@@ -417,7 +417,7 @@ def powerspectrum1d_min_chisq_fit(
     extra_start_log_bounds : np.ndarray[nparam, 2], optional
         If specified, `extra_starts` points in parameter space will be randomly chosen
         in log(parameter), with lower and upper log bounds specified by each column of
-        this array (e.g. [[-2, 6], [-2, 2]] chooses points with log10(param1) between 
+        this array (e.g. [[-2, 6], [-2, 2]] chooses points with log10(param1) between
         -2 and 6, and log10(param2) between -2 and 2). Default: None.
     extra_start_log_samplenegative : bool, optional
         If sampling starting points in log, randomly choose the sign of each parameter
@@ -750,3 +750,47 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
         )
 
         return out
+
+
+def combine_dchi2_results(cont_list):
+    """Make array of highest :math:`\Delta\chi^2` value for each noise mock.
+
+    Parameters
+    ----------
+    cont_list : list
+        List of `fitstack.containers.ChisqPowerSpectrum1D` containers with
+        the results of :math:`\chi^2` minimization.
+
+    Returns
+    -------
+    dchi2_max_arr : np.ndarray[nmocks]
+        Array of highest :math:`\Delta\chi^2` value for each mock,
+        over :math:`\Delta\chi^2`values computed from each input
+        container.
+    """
+
+    _DCHI2_FAILURE_VALUE = 0
+
+    # Make array of dchi2 values for each key
+    dchi2_2darr = []
+    for cont in cont_list:
+        # Get dchi2 values for this container
+        dchi2_single = np.abs(cont["chisq_null"][:] - cont["chisq_signal"][:])
+        # For any mock where the minimizer reported failure,
+        # replace its dchi2 value with a small value, so that
+        # it's ignored when we take the maximum dchi2 over
+        # all keys
+        dchi2_single[~cont["success"][:]] = _DCHI2_FAILURE_VALUE
+
+        dchi2_2darr.append(dchi2_single)
+
+    dchi2_2darr = np.array(dchi2_2darr)
+
+    # For each mock, take maximum dchi2 value over all containers
+    dchi2_max_arr = np.max(dchi2_2darr, axis=0)
+
+    # If there's a mock for which no key had a successful fit,
+    # remove it from the list by checking its dchi2 value
+    dchi2_max_arr = dchi2_max_arr[dchi2_max_arr > _DCHI2_FAILURE_VALUE]
+
+    return dchi2_max_arr
