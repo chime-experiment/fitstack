@@ -662,7 +662,7 @@ class AutoSignalTemplate1D:
 
             # Parse directory name for clustering or shot noise parameters
             clus_re = re.search(r"bias_([0-9\.]+)_Pk_([A-Za-z]+)_FoGh_([0-9\.]+)/", d)
-            shot_re = re.search(r"shot_FoGh_([0-9\.]+)/", d)
+            shot_re = re.search(r"shot_FoGs_([0-9\.]+)/", d)
 
             if clus_re:
                 # bias will be "0", "0.5", or "1"
@@ -674,7 +674,7 @@ class AutoSignalTemplate1D:
                 # Create a composite key that identifies the templates
                 key = f"clus-{bias}-{pk_type}-{alphaFoG_clus}"
             elif shot_re:
-                # alphaFoG_shot with be a float
+                # alphaFoG_shot will be a float
                 alphaFoG_shot = shot_re.group(1)
                 # Create a composite key that identifies the templates
                 key = f"shot-{alphaFoG_shot}"
