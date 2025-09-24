@@ -850,19 +850,38 @@ class AutoSignalTemplate1D:
         if "NL" not in kwargs:
             raise ValueError("Need a value for parameter NL")
 
-        # Rescale each template before combining
-        nonlin_signal = self.rescale_templates(
-            self._ps1D_modes["clus-nonlin-1"][0],
-            template="clus-nonlin",
-            alpha_par="FoGh",
-            **kwargs,
-        )
-        lin_signal = self.rescale_templates(
-            self._ps1D_modes["clus-lin-1"][0],
-            template="clus-lin",
-            alpha_par="FoGh",
-            **kwargs,
-        )
+        # Rescale each template before combining.
+        # Template filename may have alphaFoG=1 or alphaFoG=1.0,
+        # so we try both
+        try:
+            nonlin_signal = self.rescale_templates(
+                self._ps1D_modes["clus-nonlin-1"][0],
+                template="clus-nonlin",
+                alpha_par="FoGh",
+                **kwargs,
+            )
+        except KeyError:
+            nonlin_signal = self.rescale_templates(
+                self._ps1D_modes["clus-nonlin-1.0"][0],
+                template="clus-nonlin",
+                alpha_par="FoGh",
+                **kwargs,
+            )
+
+        try:
+            lin_signal = self.rescale_templates(
+                self._ps1D_modes["clus-lin-1"][0],
+                template="clus-lin",
+                alpha_par="FoGh",
+                **kwargs,
+            )
+        except KeyError:
+            lin_signal = self.rescale_templates(
+                self._ps1D_modes["clus-lin-1.0"][0],
+                template="clus-lin",
+                alpha_par="FoGh",
+                **kwargs,
+            )
 
         # Combine clustering templates according to Kaiser factor and matter
         # nonlinearity prescription
@@ -1114,9 +1133,16 @@ class AutoSignalTemplate1DFoG(AutoSignalTemplate1D):
 
             a = float(key.split("-")[2])
             alphas.append(a)
-            template_ratios.append(
-                self._ps1D_modes[key][0] / self._ps1D_modes[f"{template}-1"][0]
-            )
+            # Template filename may have alphaFoG=1 or alphaFoG=1.0,
+            # so we try both
+            try:
+                template_ratios.append(
+                    self._ps1D_modes[key][0] / self._ps1D_modes[f"{template}-1"][0]
+                )
+            except KeyError:
+                template_ratios.append(
+                    self._ps1D_modes[key][0] / self._ps1D_modes[f"{template}-1.0"][0]
+                )
 
         # Sort array based on alpha_FoG values
         sort_idx = np.argsort(alphas)
