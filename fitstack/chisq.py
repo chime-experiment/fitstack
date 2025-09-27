@@ -139,29 +139,16 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     nmock -= 1
 
     # Get quantities for constructing inverse covariance
-    pol_fit = fit_cont.attrs["pol_fit"]
-    ipol = fit_cont.attrs["pol_sel"]
     ifit = fit_cont.attrs["ifit"]
     flag_before = fit_cont.attrs["flag_before"]
 
-    # Compute covariance
-    cov_flat = utils.covariance(
-        np.delete(mocks, iLOO, axis=0).reshape(nmock, -1), corr=False
-    )
-    cov = utils.unravel_covariance(cov_flat, npol, nx)
-
-    # Determine the polarizations to fit
-    if pol_fit in _PS_POLNAME.values():
-        C = cov[ipol, ipol]
-    elif pol_fit == "joint":
-        C = utils.ravel_covariance(cov[ipol][:, ipol])
-
-    # Invert the covariance matrix to obtain the precision matrix
-    Cinv = np.zeros_like(C)
-
+    # Compute covariance. (Relevant pols were already selected in
+    # mocks, so no need to sub-select pols here)
+    C = utils.covariance(np.delete(mocks, iLOO, axis=0).reshape(nmock, -1), corr=False)
     if flag_before:
         C = C[ifit][:, ifit]
 
+    # Invert the covariance matrix to obtain the precision matrix
     Cinvfit = np.linalg.pinv(C)
 
     # Compute and apply the Hartlap factor to the inverse covariance
@@ -171,6 +158,7 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     if not flag_before:
         Cinvfit = Cinvfit[ifit][:, ifit]
 
+    Cinv = np.zeros_like(C)
     for ii, oi in enumerate(ifit):
         Cinv[oi, ifit] = Cinvfit[ii, :]
 
