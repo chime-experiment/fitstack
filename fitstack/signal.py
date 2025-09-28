@@ -821,7 +821,9 @@ class AutoSignalTemplate1D:
         # Load shot noise templates
         for term in shot_keys:
             logger.debug(f"Loading shot noise mode {term}")
-            self._ps1D_modes[f"shot-{term}"] = _check_load_ps1D(term)
+            self._ps1D_modes[f"shot-{term}"] = _check_load_ps1D(
+                ps1Ds_shot, f"shot-{term}"
+            )
 
     def signal_1D(self, *, omega: float, b_HI: float, **kwargs: float) -> np.ndarray:
         """Return the 1D power spectrum template for the given parameters.
@@ -895,7 +897,7 @@ class AutoSignalTemplate1D:
         # evaluate as a compex number with zero imaginary part.
         signal *= np.real(omega**2)
 
-        if self.has_shot:
+        if self.has_shot and kwargs["SN"] != 0:
             if "shot-1" in self._ps1D_modes.keys() and kwargs["FoGs"] != 0:
                 # If shot-1 is present and FoGs parameter is nonzero,
                 # recale FoGs=1 template
@@ -960,7 +962,8 @@ class AutoSignalTemplate1DFoG(AutoSignalTemplate1D):
                 template
             )
 
-        if self.has_shot:
+        if self.has_shot and "shot-1" in self._ps1D_modes.keys():
+            # If shot-1 is present, set up splines
             self._sigma2_for_amplitude["shot"] = self._solve_sigma2_for_amplitude(
                 "shot"
             )
