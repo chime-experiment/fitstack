@@ -821,6 +821,9 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
+    n_mc_ks = config.Property(proptype=int)
+    n_mc_ad = config.Property(proptype=int)
+    eps_F = config.Property(proptype=float)
     seed = config.Property(proptype=int)
 
     def setup(self):
@@ -839,6 +842,8 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
             if hasattr(self, key):
                 prop_val = getattr(self, key)
                 self.kwargs[key] = prop_val if prop_val is not None else default_val
+            elif key in ["mcmcfit_cont", "mcmcfit_cont_for_mocks", "verbose_notebook"]:
+                continue
             else:
                 self.log.warning(
                     "PowerSpectrum1DMinChisqFit does not have a property "
@@ -891,6 +896,9 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
+    n_mc_ks = config.Property(proptype=int)
+    n_mc_ad = config.Property(proptype=int)
+    eps_F = config.Property(proptype=float)
     seed = config.Property(proptype=int)
 
     def process(self, mcmcfit_cont, mcmcfit_cont_for_mocks):
