@@ -13,7 +13,7 @@ from . import containers
 from . import utils
 from . import models
 from . import priors
-from .mcmc import _PS_POLNAME
+from . import stats
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -133,6 +133,9 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     -------
     Cinv : np.ndarray[npol*nk, npol*nk]
         Inverse covariance.
+    hartlap_factor : float
+        Hartlap factor applied to inverse covariance (1.0 if factor
+        not applied).
     """
 
     nmock, npol, nx = mocks.shape
@@ -153,7 +156,10 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
 
     # Compute and apply the Hartlap factor to the inverse covariance
     if hartlap:
-        Cinvfit *= (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+        hartlap_factor = (nmock - Cinvfit.shape[0] - 2.0) / (nmock - 1.0)
+        Cinvfit *= hartlap_factor
+    else:
+        hartlap_factor = 1.0
 
     if not flag_before:
         Cinvfit = Cinvfit[ifit][:, ifit]
@@ -162,7 +168,7 @@ def get_powerspectrum1d_LOO_invcovariance(mocks, iLOO, fit_cont, hartlap=True):
     for ii, oi in enumerate(ifit):
         Cinv[oi, ifit] = Cinvfit[ii, :]
 
-    return Cinv
+    return Cinv, hartlap_factor
 
 
 def initialize_powerspectrum1d_min_chisq_ingredients(
@@ -373,13 +379,16 @@ def powerspectrum1d_min_chisq_fit(
     use_LOO_covariance=False,
     use_LOO_hartlap=True,
     seed=0,
+    n_mc_ks=10000,
+    n_mc_ad=10000,
+    eps_F=1e-8,
     verbose_notebook=False,
 ):
     """Compute the minimum chi^2 for 1d power spectrum data and mocks.
 
     Parameters
     ----------
-    mcmc_fit_cont : containers.MCMCFitPowerSpectrum1D or str
+    mcmcfit_cont : containers.MCMCFitPowerSpectrum1D or str
         Container (or container filename) with information about data,
         mocks, covariance, and signal model.
     mcmcfit_cont_for_mocks : containers.MCMCFitPowerSpectrum1D or str
@@ -435,6 +444,18 @@ def powerspectrum1d_min_chisq_fit(
         Apply Hartlap factor to LOO inverse-covariance. Default: True.
     seed : int, optional
         Random seed for generating starting points for optimizer. Default: 0.
+    n_mc_ks : int, optional
+        Number of Monte Carlo samples for Monte-Carlo-calibrated KS tests
+        that compare set of Delta chi^2 values to specific distributions.
+        Default: 10000.
+    n_mc_ad : int, optional
+        Number of Monte Carlo samples for Monte-Carlo-calibrated AD tests
+        that compare set of Delta chi^2 values to specific distributions.
+        Default: 10000.
+    eps_F : float, optional
+        Step size used for numerical approximation of the Jacobian used
+        in the L-BFGS-B optimizer when fitting an F distribution.
+        Default: 1e-8.
     verbose_notebook : bool, optional
         Whether to print status updates when evaluating in a jupyter notebook,
         using the `tqdm` package. Ignored if `tqdm` is not installed.
@@ -480,6 +501,10 @@ def powerspectrum1d_min_chisq_fit(
 
     nmock, _, _ = mock_data.shape
 
+    # ---------
+    # Compute Delta chi^2 for data
+    # ---------
+
     # Run minimizer for each starting point, saving run that yields lowest
     # chi^2
     for pi, params in enumerate(param0_points):
@@ -516,6 +541,18 @@ def powerspectrum1d_min_chisq_fit(
     # Save chi^2 for null model and data
     out.attrs["data_null_chisq"] = 2.0 * null_model.negative_log_likelihood([])
 
+    # Save best-fit model prediction for data
+    if save_bestfit_models:
+        # Save best-fit model prediction for data
+        out.add_dataset("data_bestfit_model")
+        out.datasets["data_bestfit_model"][:] = signal_model.model(
+            signal_model.get_all_params(resd.x)
+        )
+
+    # ---------
+    # Compute Delta chi^2 for mocks
+    # ---------
+
     # Dereference datasets for mock fitting
     success = out["success"][:].view(np.ndarray)
     chisq_null = out["chisq_null"][:].view(np.ndarray)
@@ -525,14 +562,8 @@ def powerspectrum1d_min_chisq_fit(
         np.ndarray
     )
 
+    # Initialize dataset to store best-fit model predictions for mocks
     if save_bestfit_models:
-        # Save best-fit model prediction for data
-        out.add_dataset("data_bestfit_model")
-        out.datasets["data_bestfit_model"][:] = signal_model.model(
-            signal_model.get_all_params(resd.x)
-        )
-
-        # Initialize dataset to store best-fit model predictions for mocks
         out.add_dataset("mock_bestfit_models")
 
     # Loop over mocks
@@ -550,8 +581,10 @@ def powerspectrum1d_min_chisq_fit(
         # Update models to consider mock data
         fit_kwargs["data"] = _re(mock_data[mm])
         if use_LOO_covariance:
-            fit_kwargs["inv_cov"] = get_powerspectrum1d_LOO_invcovariance(
-                mock_data, mm, fit_cont_for_mocks, hartlap=use_LOO_hartlap
+            fit_kwargs["inv_cov"], LOO_hartlap_factor = (
+                get_powerspectrum1d_LOO_invcovariance(
+                    mock_data, mm, fit_cont_for_mocks, hartlap=use_LOO_hartlap
+                )
             )
         signal_model.set_data(**fit_kwargs)
         null_model.set_data(**fit_kwargs)
@@ -592,23 +625,169 @@ def powerspectrum1d_min_chisq_fit(
                 signal_model.get_all_params(resd.x)
             )
 
-        # Save chi^2 for null model and data
+        # Save chi^2 for null model and mock
         chisq_null[mm] = 2.0 * null_model.negative_log_likelihood([])
 
-    # Fit a chi^2 distribution with an unknown number of d.o.f. to the
+    # ---------
+    # Compute detection significances based on fitted distributions
+    # ---------
+
+    # Fit a chi^2 distribution with a free number of d.o.f. to the
     # Delta chi^2 values for each mock
     dchisq_mocks = chisq_null[success] - chisq_signal[success]
-    ndof_mocks = scipy.stats.chi2.fit(dchisq_mocks, floc=0, fscale=1)[0]
-    out.attrs["dchisq_distribution_ndof"] = ndof_mocks
+    ndof_mocks_chisq = stats.fit_chi2_to_array(dchisq_mocks)
+    out.attrs["chisq_distribution_ndof"] = ndof_mocks_chisq
 
-    # Compute p-value and "number of sigmas" for Delta chi^2 value for data
+    # Compute Monte-Carlo-calibrated p-values for KS and AD tests
+    # comparing the set of Delta chi^2 values to the best-fit
+    # chi^2 distribution
+    logger.info("Computing KS p-value for chi^2 distribution")
+    ks_p_chisq, _, _ = stats.compute_MC_calibrated_distribution_test(
+        dchisq_mocks,
+        test="KS",
+        dist="chi2",
+        seed=seed,
+        verbose=False,
+        n_mc_sims=n_mc_ks,
+    )
+    out.attrs["chisq_distribution_ks_pvalue"] = ks_p_chisq
+    logger.info("Computing AD p-value for chi^2 distribution")
+    ad_p_chisq, _, _ = stats.compute_MC_calibrated_distribution_test(
+        dchisq_mocks,
+        test="AD",
+        dist="chi2",
+        seed=seed,
+        verbose=False,
+        n_mc_sims=n_mc_ad,
+    )
+    out.attrs["chisq_distribution_ad_pvalue"] = ad_p_chisq
+
+    # Compute p-value and "number of sigmas" for Delta chi^2 value for data,
+    # using fitted chi^2 distribution
     dchisq_data = out.attrs["data_null_chisq"] - out.attrs["data_signal_chisq"]
-    data_pvalue = scipy.stats.chi2.sf(dchisq_data, ndof_mocks)
-    data_nsigmas = scipy.stats.norm.isf(data_pvalue)
+    data_pvalue_chisq = scipy.stats.chi2.sf(dchisq_data, ndof_mocks_chisq)
+    data_nsigmas_chisq = scipy.stats.norm.isf(data_pvalue_chisq)
+    out.attrs["data_pvalue_chisq"] = data_pvalue_chisq
+    out.attrs["data_nsigmas_chisq"] = data_nsigmas_chisq
 
-    out.attrs["data_pvalue"] = data_pvalue
-    out.attrs["data_nsigmas"] = data_nsigmas
+    # If Hartlap factor was applied to inverse covariance, undo it
+    # in Delta chi^2 values
+    if use_LOO_covariance and use_LOO_hartlap:
+        scaled_dchisq_mocks = dchisq_mocks / LOO_hartlap_factor
+        scaled_dchisq_data = dchisq_data / LOO_hartlap_factor
+    else:
+        scaled_dchisq_mocks = (
+            dchisq_mocks / mcmcfit_cont_for_mocks.attrs["hartlap_factor"]
+        )
+        scaled_dchisq_data = (
+            dchisq_data / mcmcfit_cont_for_mocks.attrs["hartlap_factor"]
+        )
 
+    # Fit F distribution to Delta chi^2 values
+    if use_LOO_covariance:
+        n_for_F = nmock - 2
+    else:
+        n_for_F = nmock - 1
+    n_data = len(mcmcfit_cont.attrs["ifit"])
+    ndof_mocks_F, _ = stats.fit_F_to_scaled_array(
+        scaled_dchisq_mocks, n_for_F, n_data, p_eff_0=None, eps=eps_F
+    )
+    out.attrs["F_distribution_ndof"] = ndof_mocks_F
+
+    # Compute Monte-Carlo-calibrated p-values for KS and AD tests
+    # comparing the set of (appropriately-scaled) Delta chi^2 values
+    # to the best-fit F distribution
+    logger.info("Computing KS p-value for F distribution")
+    ks_p_F, _, _ = stats.compute_MC_calibrated_distribution_test(
+        scaled_dchisq_mocks,
+        test="KS",
+        dist="F",
+        n_for_F=n_for_F,
+        p_for_F=n_data,
+        seed=seed,
+        verbose=False,
+        n_mc_sims=n_mc_ks,
+    )
+    out.attrs["F_distribution_ks_pvalue"] = ks_p_F
+    logger.info("Computing AD p-value for F distribution")
+    ad_p_F, _, _ = stats.compute_MC_calibrated_distribution_test(
+        scaled_dchisq_mocks,
+        test="AD",
+        dist="F",
+        n_for_F=n_for_F,
+        p_for_F=n_data,
+        seed=seed,
+        verbose=False,
+        n_mc_sims=n_mc_ad,
+    )
+    out.attrs["F_distribution_ad_pvalue"] = ad_p_F
+
+    # Compute p-value and "number of sigmas" for Delta chi^2 value for data,
+    # using fitted F distribution
+    scaled_dchisq_data *= stats.F_scaling(n_for_F, n_data, ndof_mocks_F)
+    data_pvalue_F = scipy.stats.f.sf(
+        scaled_dchisq_data, dfn=ndof_mocks_F, dfd=n_for_F - n_data + 1
+    )
+    data_nsigmas_F = scipy.stats.norm.isf(data_pvalue_F)
+    out.attrs["data_pvalue_F"] = data_pvalue_F
+    out.attrs["data_nsigmas_F"] = data_nsigmas_F
+
+    # ---------
+    # Compute detection significance based on fitting single amplitude
+    # ---------
+
+    # Re-initialize signal model with data
+    (
+        signal_model,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+        _,
+    ) = initialize_powerspectrum1d_min_chisq_ingredients(
+        mcmcfit_cont,
+        mcmcfit_cont_for_mocks=mcmcfit_cont_for_mocks,
+        model_kwargs=model_kwargs,
+        param_spec=param_spec,
+        param0=param0,
+        extra_starts=extra_starts,
+        extra_start_log_bounds=extra_start_log_bounds,
+        extra_start_log_samplenegative=extra_start_log_samplenegative,
+        bounded=method in BOUNDED_MINIMIZATION,
+        scale_bound=scale_bound,
+        force_real=force_real,
+        add_mock_to_data=add_mock_to_data,
+        initialize_with_mock=None,
+        seed=seed,
+    )
+
+    # Define chi^2 function based on taking best-fit model and
+    # scaling with free amplitude (with fiducial value 1.0)
+    def signal_chi2_at_amplitude(amp):
+        return 2 * signal_model.negative_log_likelihood(
+            out.attrs["data_signal_bestfit_param"], amp=amp
+        )
+
+    # Find minimum of this chi^2 function
+    signal_chi2_min = signal_chi2_at_amplitude(1.0)
+
+    # Find amplitude values on either side of fiducial value
+    # where chi^2 function increases by 1
+    bf_amp_lo, bf_amp_hi = stats.find_symmetric_roots(
+        signal_chi2_at_amplitude, signal_chi2_min + 1.0, 1.0, 0.0, 5.0
+    )
+
+    # Detection significance is Delta(amp)/amp.
+    # Avearge these values computed with low and high values
+    # of amplitude
+    data_nsigmas_ampfit_lo = 1.0 / (bf_amp_hi - 1.0)
+    data_nsigmas_ampfit_hi = 1.0 / (1.0 - bf_amp_lo)
+    data_nsigmas_ampfit = 0.5 * (data_nsigmas_ampfit_lo + data_nsigmas_ampfit_hi)
+    out.attrs["data_nsigmas_ampfit"] = data_nsigmas_ampfit
+
+    # Same other useful information
     out.attrs["param0_points"] = param0_points
     out.attrs["seed"] = seed
 
