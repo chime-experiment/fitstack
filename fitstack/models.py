@@ -168,13 +168,15 @@ class Model(object):
 
         return log_prior
 
-    def log_likelihood(self, theta):
+    def log_likelihood(self, theta, amp=None):
         """Evaluate the log of the likelihood.
 
         Parameters
         ----------
         theta : list
             Values for the fit parameters.
+        amp : float, optional
+            Scale model by extra amplitude. Default: None.
 
         Returns
         -------
@@ -185,25 +187,29 @@ class Model(object):
         theta_all = self.get_all_params(theta)
 
         mdl = self.model(theta_all)
+        if amp is not None:
+            mdl *= amp
 
         residual = np.ravel(self.data - mdl)
 
         return -0.5 * np.matmul(residual.T, np.matmul(self.inv_cov, residual))
 
-    def negative_log_likelihood(self, theta):
+    def negative_log_likelihood(self, theta, amp=None):
         """Evaluate the negative log of the likelihood.
 
         Parameters
         ----------
         theta : list
             Values for the fit parameters.
+        amp : float, optional
+            Scale model by extra amplitude. Default: None.
 
         Returns
         -------
         nlogL : float
             Negative logarithm of the likelihood function.
         """
-        return -self.log_likelihood(theta)
+        return -self.log_likelihood(theta, amp=amp)
 
     def log_probability(self, theta):
         """Evaluate log of the probability of observing the data given the parameters.
