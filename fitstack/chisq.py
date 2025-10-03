@@ -375,6 +375,7 @@ def powerspectrum1d_min_chisq_fit(
     scale_bound=0.0,
     force_real=True,
     add_mock_to_data=None,
+    center_mocks_on_data=False,
     save_bestfit_models=False,
     use_LOO_covariance=False,
     use_LOO_hartlap=True,
@@ -435,6 +436,10 @@ def powerspectrum1d_min_chisq_fit(
         Add mock with this index to data before performing fit. This is intended
         as a quick way to add a noise realization to an input signal-only
         simulation. Default: None.
+    center_mocks_on_data: bool, optional
+        Add data power spectrum to each mock. Primarily used for determine
+        the effective number of degrees of freedom in the model, centered
+        on the region of parameter space inhabited by the data. Default: False.
     save_bestfit_models : bool, optional
         Whether to save best-fit model evaluations for data and each mock, as
         datasets in output container. Default: False.
@@ -531,10 +536,12 @@ def powerspectrum1d_min_chisq_fit(
                 resd = test_resd
                 bestfit_negloglike = test_negloglike
 
+    data_signal_bestfit_param = resd.x
+
     # Save results, along with data itself, to output container
     out.attrs["data_signal_success"] = resd.success
     out.attrs["data_signal_chisq"] = 2.0 * signal_model.negative_log_likelihood(resd.x)
-    out.attrs["data_signal_bestfit_param"] = resd.x
+    out.attrs["data_signal_bestfit_param"] = data_signal_bestfit_param
     out.attrs["data"] = fit_kwargs["data"][:]
     out.attrs["data_bestfit_starting_point_idx"] = bestfit_starting_point_idx
 
@@ -580,6 +587,8 @@ def powerspectrum1d_min_chisq_fit(
 
         # Update models to consider mock data
         fit_kwargs["data"] = _re(mock_data[mm])
+        if center_mocks_on_data:
+            fit_kwargs["data"] += out.attrs["data"]
         if use_LOO_covariance:
             fit_kwargs["inv_cov"], LOO_hartlap_factor = (
                 get_powerspectrum1d_LOO_invcovariance(
@@ -625,8 +634,15 @@ def powerspectrum1d_min_chisq_fit(
                 signal_model.get_all_params(resd.x)
             )
 
-        # Save chi^2 for null model and mock
-        chisq_null[mm] = 2.0 * null_model.negative_log_likelihood([])
+        # Save chi^2 for null model and mock.
+        # If mocks are data-centered, null model is best-fit signal model for data.
+        # If mocks are not data-centered, null model is no-signal model.
+        if center_mocks_on_data:
+            chisq_null[mm] = 2.0 * signal_model.negative_log_likelihood(
+                data_signal_bestfit_param
+            )
+        else:
+            chisq_null[mm] = 2.0 * null_model.negative_log_likelihood([])
 
     # ---------
     # Compute detection significances based on fitted distributions
@@ -818,6 +834,7 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     scale_bound = config.Property(proptype=float)
     force_real = config.Property(proptype=bool)
     add_mock_to_data = config.Property(proptype=int)
+    center_mocks_on_data = config.Property(proptype=bool)
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
@@ -893,6 +910,7 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     scale_bound = config.Property(proptype=float)
     force_real = config.Property(proptype=bool)
     add_mock_to_data = config.Property(proptype=int)
+    center_mocks_on_data = config.Property(proptype=bool)
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
