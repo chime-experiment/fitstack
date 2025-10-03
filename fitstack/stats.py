@@ -166,12 +166,23 @@ def compute_MC_calibrated_distribution_test(
 ):
     """Compute Monte-Carlo-calibrated distribution test.
 
+    For a set of values, we compute the specified test statistic
+    (KS or AD) comparing the values to the specified distribution
+    (chi^2 or F) with `n_dof` parameter fit to the values themselves.
+    We then generate `n_mc_sims` draws of the same number of values
+    from the best-fit distribution, re-fit the distribution to the draw,
+    and compute the test statistic for each draw and the corresponding
+    best-fit distribution. The number of draws with test statistic
+    greater than the data test statistic is the p-value for the test,
+    but calibrated via Monte Carlo. We also return the data test
+    statistic and test statistics for each draw.
+
     Parameters
     ----------
     vals : np.ndarray
         Array of values to compare to a distribution.
     test : str, optional
-        Test to apply. Must be one of "KS" (Kolmogoriv-Smirnov)
+        Test to apply. Must be one of "KS" (Kolmogorov-Smirnov)
         or "AD" (Anderson-Darling). Default: "KS".
     dist : str, optional
         Distribution to test. Must be one of "chi2" or "F".
