@@ -518,6 +518,7 @@ def run_mcmc(
     flag_ind=None,
     hartlap=True,
     force_real=True,
+    progress=True,
 ):
     """Fit a model to the source stack or power spectrum using an MCMC.
 
@@ -624,6 +625,8 @@ def run_mcmc(
         Force input datasets to be real. Assumes that input datasets have
         been previously examined to verify that imaginary parts are small and/or
         unimportant. Default: True.
+    progress : bool
+        Whether to display emcee progress bar. Default: True.
 
     Returns
     -------
@@ -679,7 +682,7 @@ def run_mcmc(
     # Create the sampler and run the MCMC
     sampler = emcee.EnsembleSampler(nwalker, ndim, model.log_probability_sampler)
 
-    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=True)
+    sampler.run_mcmc(model.forward_transform_sampler(pos), nsample, progress=progress)
 
     chain = model.backward_transform_sampler(sampler.get_chain())
 
@@ -788,6 +791,7 @@ class RunMCMC(task.SingleTask):
     hartlap = config.Property(proptype=bool)
 
     force_real = config.Property(proptype=bool)
+    progress = config.Property(proptype=bool)
 
     def setup(self):
         """Prepare all arguments to the run_mcmc function."""
