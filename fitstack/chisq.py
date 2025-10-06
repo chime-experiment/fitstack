@@ -439,9 +439,10 @@ def powerspectrum1d_min_chisq_fit(
         as a quick way to add a noise realization to an input signal-only
         simulation. Default: None.
     center_mocks_on_data: bool, optional
-        Add data power spectrum to each mock. Primarily used for determine
-        the effective number of degrees of freedom in the model, centered
-        on the region of parameter space inhabited by the data. Default: False.
+        Add best-fit signal power spectrum (fit to data) to each mock.
+        Primarily used for determining the effective number of degrees of
+        freedom in the model, centered on the region of parameter space
+        inhabited by the data. Default: False.
     save_bestfit_models : bool, optional
         Whether to save best-fit model evaluations for data and each mock, as
         datasets in output container. Default: False.
@@ -555,7 +556,7 @@ def powerspectrum1d_min_chisq_fit(
         # Save best-fit model prediction for data
         out.add_dataset("data_bestfit_model")
         out.datasets["data_bestfit_model"][:] = signal_model.model(
-            signal_model.get_all_params(resd.x)
+            signal_model.get_all_params(data_signal_bestfit_param)
         )
 
     # ---------
@@ -588,9 +589,11 @@ def powerspectrum1d_min_chisq_fit(
             logger.info(f"Fitting data realization {mm} of {nmock}.")
 
         # Update models to consider mock data
-        fit_kwargs["data"] = _re(mock_data[mm])
+        fit_kwargs["data"] = _re(mock_data[mm]).copy()
         if center_mocks_on_data:
-            fit_kwargs["data"] += out.attrs["data"]
+            fit_kwargs["data"] += signal_model.model(
+                signal_model.get_all_params(data_signal_bestfit_param)
+            )
         if use_LOO_covariance:
             fit_kwargs["inv_cov"], LOO_hartlap_factor = (
                 get_powerspectrum1d_LOO_invcovariance(
