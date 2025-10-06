@@ -385,6 +385,7 @@ def powerspectrum1d_min_chisq_fit(
     n_mc_ks=10000,
     n_mc_ad=10000,
     eps_F=1e-8,
+    minimize_tol=1e-3,
     verbose_notebook=False,
 ):
     """Compute the minimum chi^2 for 1d power spectrum data and mocks.
@@ -464,6 +465,9 @@ def powerspectrum1d_min_chisq_fit(
         Step size used for numerical approximation of the Jacobian used
         in the L-BFGS-B optimizer when fitting an F distribution.
         Default: 1e-8.
+    minimize_tol : float, optional
+        `tol` argument for `minimize` routine used for chi^2-minimization.
+        Default: None.
     verbose_notebook : bool, optional
         Whether to print status updates when evaluating in a jupyter notebook,
         using the `tqdm` package. Ignored if `tqdm` is not installed.
@@ -522,6 +526,7 @@ def powerspectrum1d_min_chisq_fit(
             method=method,
             bounds=param_bounds,
             options=options,
+            tol=minimize_tol,
         )
 
         if pi == 0:
@@ -612,6 +617,7 @@ def powerspectrum1d_min_chisq_fit(
                 method=method,
                 bounds=param_bounds,
                 options=options,
+                tol=minimize_tol,
             )
 
             if pi == 0:
@@ -846,6 +852,7 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     n_mc_ks = config.Property(proptype=int)
     n_mc_ad = config.Property(proptype=int)
     eps_F = config.Property(proptype=float)
+    minimize_tol = config.Property(proptype=float)
     seed = config.Property(proptype=int)
 
     def setup(self):
@@ -922,6 +929,7 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     n_mc_ks = config.Property(proptype=int)
     n_mc_ad = config.Property(proptype=int)
     eps_F = config.Property(proptype=float)
+    minimize_tol = config.Property(proptype=float)
     seed = config.Property(proptype=int)
 
     def process(self, mcmcfit_cont, mcmcfit_cont_for_mocks):
