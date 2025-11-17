@@ -163,6 +163,8 @@ def compute_MC_calibrated_distribution_test(
     p_for_F=16,
     verbose=False,
     n_mc_sims=1000,
+    bootstrap=False,
+    return_ndof=False,
 ):
     """Compute Monte-Carlo-calibrated distribution test.
 
@@ -176,6 +178,10 @@ def compute_MC_calibrated_distribution_test(
     greater than the data test statistic is the p-value for the test,
     but calibrated via Monte Carlo. We also return the data test
     statistic and test statistics for each draw.
+
+    Alternatively, this function allows one to draw bootstrap resamples
+    of the input set of values instead of generating Monte Carlo
+    draws from the fitted distribution.
 
     Parameters
     ----------
@@ -198,6 +204,12 @@ def compute_MC_calibrated_distribution_test(
     n_mc_sims : int, optional
         Number of Monte Carlo realizations of distribution.
         Default: 1000.
+    bootstrap : bool, optional
+        Draw bootstrap resamples of original set of values, instead
+        of drawing from best-fit distribution. Default: False.
+    return_ndof : bool, optional
+        Return array of fitted n_dof values for each Monte Carlo
+        realization. Default: False.
 
     Returns
     -------
@@ -207,6 +219,9 @@ def compute_MC_calibrated_distribution_test(
         Test statistic evaluated on input values.
     statistic_sim : np.ndarray
         Array of test statistics computed via Monte Carlo.
+    ndof_sim : np.ndarray
+        Array of fitted n_dof values for each Monte Carlo realization.
+        Only returned if `return_dof` is True.
     """
 
     _TESTS = ["KS", "AD"]
@@ -276,9 +291,13 @@ def compute_MC_calibrated_distribution_test(
     # Loop over MC sims
     for s in s_range:
         if dist == "chi2":
-            # Generate n_mocks random draws from chi^2 distribution,
-            # and fit n_dof
-            sim_vals = rng.chisquare(df=ndof_data, size=n_mocks)
+            # Generate n_mocks random draws from chi^2 distribution
+            # or input values, and fit n_dof
+            if bootstrap:
+                sim_vals = rng.choice(vals, size=len(vals), replace=True)
+            else:
+                sim_vals = rng.chisquare(df=ndof_data, size=n_mocks)
+
             ndof = fit_chi2_to_array(sim_vals)
 
             if test == "KS":
@@ -289,10 +308,19 @@ def compute_MC_calibrated_distribution_test(
                 )
 
         elif dist == "F":
-            # Generate n_mocks random draws from F distribution,
-            # and fit n_dof
-            sim_vals = rng.f(dfnum=ndof_data, dfden=df_den, size=n_mocks)
-            ndof = scipy.stats.f.fit(sim_vals, fdfd=df_den, floc=0, fscale=1)[0]
+            # Generate n_mocks random draws from F distribution
+            # or input values, and fit n_dof
+            if bootstrap:
+                sim_vals = rng.choice(
+                    vals,
+                    size=len(vals),
+                    replace=True,
+                )
+                ndof, _ = fit_F_to_scaled_array(sim_vals, n_for_F, p_for_F)
+                sim_vals *= F_scaling(n_for_F, p_for_F, ndof)
+            else:
+                sim_vals = rng.f(dfnum=ndof_data, dfden=df_den, size=n_mocks)
+                ndof = scipy.stats.f.fit(sim_vals, fdfd=df_den, floc=0, fscale=1)[0]
 
             if test == "KS":
                 statistic, _ = scipy.stats.kstest(sim_vals, "f", args=(ndof, df_den))
@@ -312,7 +340,10 @@ def compute_MC_calibrated_distribution_test(
     # data value
     p_cal = np.mean(statistic_sim > statistic_data)
 
-    return p_cal, statistic_data, statistic_sim
+    if return_ndof:
+        return p_cal, statistic_data, statistic_sim, ndof_sim
+    else:
+        return p_cal, statistic_data, statistic_sim
 
 
 def compute_MC_calibrated_LOBO_distribution_test(
