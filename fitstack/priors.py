@@ -1,6 +1,7 @@
 """Define statistical distributions that can be used to place priors on parameters."""
 
 import numpy as np
+from scipy.integrate import quad
 
 
 class Prior(object):
@@ -96,7 +97,7 @@ class Gaussian(Prior):
 
         self.loc = loc
         self.scale = scale
-        self.norm = 1.0 / np.sqrt(2.0 * np.pi * self.scale ** 2)
+        self.norm = 1.0 / np.sqrt(2.0 * np.pi * self.scale**2)
 
     def evaluate(self, theta):
         """Evaluate the probability of observing this value of the parameter.
@@ -112,7 +113,7 @@ class Gaussian(Prior):
             The probability of observing the input parameter value.
         """
 
-        return self.norm * np.exp(-((theta - self.loc) ** 2) / (2.0 * self.scale ** 2))
+        return self.norm * np.exp(-((theta - self.loc) ** 2) / (2.0 * self.scale**2))
 
     def draw_random(self):
         """Draw a random value of the parameter from the prior distribution.
@@ -124,3 +125,67 @@ class Gaussian(Prior):
         """
 
         return self.rng.normal(loc=self.loc, scale=self.scale)
+
+
+class PowerLaw(Prior):
+    """Power-law prior distribution."""
+
+    def __init__(self, low=0.0, high=1.0, power=0.0, **kwargs):
+        """Set the lower and upper boundaries of the distribution, and the power.
+
+        Parameters
+        ----------
+        low : float
+            The lower boundary.
+        high : float
+            The upper boundary.
+        power : float
+            Power for power-law prior
+        """
+
+        super().__init__(**kwargs)
+
+        self.low = low
+        self.high = high
+        self.power = power
+
+        def _power(x):
+            return x**power
+
+        self.norm = 1.0 / quad(_power, low, high)[0]
+
+    def evaluate(self, theta):
+        """Evaluate the probability of observing this value of the parameter.
+
+        Parameters
+        ----------
+        theta : float
+            The parameter value.
+
+        Returns
+        -------
+        prob : float
+            The probability of observing the input parameter value.
+        """
+
+        return (
+            self.norm
+            * ((theta >= self.low) and (theta <= self.high))
+            * theta**self.power
+        )
+
+    def draw_random(self):
+        """Draw a random value of the parameter from the prior distribution.
+
+        Returns
+        -------
+        theta : float
+            Random value of the parameter.
+        """
+        u = self.rng.uniform(low=0, high=1)
+
+        if self.power == -1.0:
+            return self.low * (self.high / self.low) ** u
+        else:
+            c = 1.0 + self.power
+            return (u * (self.high**c - self.low**c) + self.low**c) ** (1.0 / c)

@@ -12,6 +12,8 @@ from scipy.optimize import curve_fit
 from draco.util import tools
 from draco.core import containers
 
+from . import utils
+
 
 def _rolling_window(a, window):
     shape = a.shape[:-1] + (a.shape[-1] - window + 1, window)
@@ -19,9 +21,7 @@ def _rolling_window(a, window):
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)
 
 
-def _apply_shift(arr, freq, shift):
-
-    slc = (None,) * (arr.ndim - 1) + (slice(None),)
+def _apply_shift(arr, freq, offset):
 
     df = np.abs(freq[1] - freq[0])
     tau = np.fft.rfftfreq(freq.size, d=df * 1e6) * 1e6
@@ -155,7 +155,7 @@ def fit_histogram(
 
     # Define the fitting function
     def gauss(x, peak, mu, sigma):
-        return peak * np.exp(-((x - mu) ** 2) / (2.0 * sigma ** 2))
+        return peak * np.exp(-((x - mu) ** 2) / (2.0 * sigma**2))
 
     # Perform the fit
     par, var_par = curve_fit(
@@ -217,9 +217,9 @@ def convolve_template(data, template, pp=None, weight=None, max_df=6.0, offset=N
     ikeep = np.flatnonzero(np.abs(template.freq[:]) <= max_df)
 
     if pp is None:
-        d, w = combine_pol(data)
+        d, w = utils.combine_pol(data)
         w = weight if weight is not None else w
-        t, wt = combine_pol(template)
+        t, wt = utils.combine_pol(template)
     else:
         d = data["stack"][pp]
         w = weight if weight is not None else data["weight"][pp]
@@ -296,7 +296,7 @@ def process_data_matched_filter(
         mock_stack[0:mpol, mm, :] = mck["stack"][:]
         mock_weight[0:mpol, mm, :] = mck["weight"][:]
 
-        ms, mw = combine_pol(mck)
+        ms, mw = utils.combine_pol(mck)
         mock_stack[-1, mm, :] = ms
         mock_weight[-1, mm, :] = mw
 
@@ -312,12 +312,12 @@ def process_data_matched_filter(
             (noise_scale_factor[:, np.newaxis] * exp_std_mock) ** 2
         )
     else:
-        weight = tools.invert_no_zero(obs_std_mock ** 2)
+        weight = tools.invert_no_zero(obs_std_mock**2)
 
     # Calculate the standard deviation of the mocks by fitting to histogram
     dcmock = {}
     for pp, pstr in enumerate(pol):
-        dcmock[pstr] = cal_utils.fit_histogram(
+        dcmock[pstr] = fit_histogram(
             scale * mock_stack[pp].flatten(),
             bins=bins,
             rng=brng,
@@ -372,7 +372,7 @@ def process_data_matched_filter(
     # Calculate the standard deviation of the convolved template by fitting to histogram
     dcmamp = {}
     for pp, pstr in enumerate(pol):
-        dcmamp[pstr] = cal_utils.fit_histogram(
+        dcmamp[pstr] = fit_histogram(
             scale * mamp[pp].flatten(),
             bins=bins,
             rng=brng,
@@ -394,8 +394,8 @@ def process_data_matched_filter(
     results["distribution_mock"] = dcmock
     results["distribution_mock_convolved"] = dcmamp
 
-    dd, dw = combine_pol(data)
-    td, tw = combine_pol(template)
+    dd, dw = utils.combine_pol(data)
+    td, tw = utils.combine_pol(template)
 
     results["data"] = np.concatenate((data["stack"][:], dd[np.newaxis, :]), axis=0)
     results["template"] = np.concatenate(

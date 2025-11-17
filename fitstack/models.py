@@ -1,5 +1,7 @@
 """Define models that can be fit to the source stack."""
+
 import inspect
+import logging
 
 import numpy as np
 
@@ -8,6 +10,9 @@ from draco.util import tools
 from . import priors
 from . import signal
 from . import utils
+
+
+logger = logging.getLogger(__name__)
 
 
 class Model(object):
@@ -49,7 +54,7 @@ class Model(object):
     param_name = []
     _param_spec = {}
 
-    def __init__(self, seed=None, **param_spec):
+    def __init__(self, seed=None, force_real=True, **param_spec):
         """Initialize the model.
 
         Parameters
@@ -58,6 +63,11 @@ class Model(object):
             Seed to use for random number generation.
             If the seed is not provided, then a random
             seed will be taken from system entropy.
+        force_real : bool
+            Force input datasets to be real. Assumes that input
+            datasets have been previously examined to verify
+            that imaginary parts are small and/or unimportant.
+            Default: True.
         param_spec : dict
             Specifies the prior distribution for each parameter.
             See the description of the class attribute of the
@@ -72,10 +82,15 @@ class Model(object):
         self.seed = seed
         self.rng = np.random.Generator(np.random.SFC64(seed))
 
+        self.force_real = force_real
+
         defaults = self.default_param_spec()
         self.param_spec = {}
         for name in self.param_name:
-            self.param_spec[name] = param_spec.get(name, defaults[name])
+            if name in param_spec:
+                self.param_spec[name] = param_spec[name]
+            else:
+                self.param_spec[name] = defaults[name]
 
         self.priors = {}
         for name, spec in self.param_spec.items():
@@ -100,8 +115,11 @@ class Model(object):
             name for name in self.param_name if self.param_spec[name]["fixed"]
         ]
 
+    def _re(self, x):
+        return np.real(x) if self.force_real else x
+
     def set_data(self, **kwargs):
-        """Save any ancillary data needed to evaluate the probabily distribution.
+        """Save any ancillary data needed to evaluate the probability distribution.
 
         Parameters
         ----------
@@ -153,13 +171,15 @@ class Model(object):
 
         return log_prior
 
-    def log_likelihood(self, theta):
+    def log_likelihood(self, theta, amp=None):
         """Evaluate the log of the likelihood.
 
         Parameters
         ----------
         theta : list
             Values for the fit parameters.
+        amp : float, optional
+            Scale model by extra amplitude. Default: None.
 
         Returns
         -------
@@ -170,10 +190,29 @@ class Model(object):
         theta_all = self.get_all_params(theta)
 
         mdl = self.model(theta_all)
+        if amp is not None:
+            mdl *= amp
 
         residual = np.ravel(self.data - mdl)
 
         return -0.5 * np.matmul(residual.T, np.matmul(self.inv_cov, residual))
+
+    def negative_log_likelihood(self, theta, amp=None):
+        """Evaluate the negative log of the likelihood.
+
+        Parameters
+        ----------
+        theta : list
+            Values for the fit parameters.
+        amp : float, optional
+            Scale model by extra amplitude. Default: None.
+
+        Returns
+        -------
+        nlogL : float
+            Negative logarithm of the likelihood function.
+        """
+        return -self.log_likelihood(theta, amp=amp)
 
     def log_probability(self, theta):
         """Evaluate log of the probability of observing the data given the parameters.
@@ -214,7 +253,8 @@ class Model(object):
         """
 
         theta_all = np.copy(self.default_values)
-        theta_all[self.fit_index] = theta
+        if self.nfit > 0:
+            theta_all[self.fit_index] = theta
 
         return theta_all
 
@@ -258,9 +298,91 @@ class Model(object):
 
         return param_spec
 
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Take a sample (or set of) and transform into the basis used by the sampler.
+
+        Use this to transform into a basis that is more easily traversed by the sampler.
+        Must be an inverse of `backward_transform_sampler`.
+
+        Parameters
+        ----------
+        sample
+            A 1D array containing a single sample, or a 2D array containing rows of
+            samples.
+
+        Returns
+        -------
+        transformed_samples
+            The sample transformed into the samplers basis.
+        """
+        return sample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Take a sample (or set of) and transform from the basis used by the sampler.
+
+        Use this to transform from a basis that is more easily traversed by the sampler.
+        Must be an inverse of `forward_transform_sampler`.
+
+        Parameters
+        ----------
+        sample
+            A 1D array containing a single sample, or a 2D array containing rows of
+            samples in the basis used by the sampler.
+
+        Returns
+        -------
+        original_samples
+            The sample(s) transformed into the original basis.
+        """
+        return sample
+
+    def log_probability_sampler(self, theta: np.ndarray) -> float:
+        """A log probability function in the sampler's basis.
+
+        Parameters
+        ----------
+        theta
+            Coordinate vector in the samplers basis.
+
+        Returns
+        -------
+        lp
+            The log probability of the sample.
+        """
+        return self.log_probability(
+            self.backward_transform_sampler(theta)
+        ) + self.log_transform_measure(theta)
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        return 0.0
+
+
+class NullModel(Model):
+    """Model that just returns zero.
+
+    Intended for assessing a zero-signal null hypothesis.
+    """
+
+    param_name = []
+
+    def model(self, theta):
+        """Evaluate model.
+
+        Parameters
+        ----------
+        theta : array_like
+            Array of input parameters (unused).
+
+        Returns
+        -------
+        model : float
+            Null model value (zero).
+        """
+        return 0.0
+
 
 class ScaledShiftedTemplate(Model):
-    """Scaled and shifted template model."""
+    """Scaled and shifted stacking template model."""
 
     param_name = ["amp", "offset"]
 
@@ -270,7 +392,7 @@ class ScaledShiftedTemplate(Model):
             "value": 1.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": 0.0,
+                "low": -10.0,
                 "high": 10.0,
             },
         },
@@ -279,14 +401,14 @@ class ScaledShiftedTemplate(Model):
             "value": 0.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 1.0,
+                "low": -0.8,
+                "high": 0.8,
             },
         },
     }
 
     def model(self, theta, freq=None, transfer=None, template=None):
-        """Evaluate the model consisting of a scaled and shifted template.
+        r"""Evaluate the model consisting of a scaled and shifted stacking template.
 
         .. math::
 
@@ -387,8 +509,8 @@ class Exponential(Model):
             "value": 0.0,
             "prior": "Uniform",
             "kwargs": {
-                "low": -1.0,
-                "high": 1.0,
+                "low": -0.8,
+                "high": 0.8,
             },
         },
         "scale": {
@@ -403,7 +525,7 @@ class Exponential(Model):
     }
 
     def model(self, theta, freq=None, transfer=None):
-        """Evaluate the exponential model.
+        r"""Evaluate the exponential model.
 
         .. math::
 
@@ -452,7 +574,1025 @@ class Exponential(Model):
 class SimulationTemplate(Model):
     """Model consisting of a linear combination of templates from simulations."""
 
+    param_name = [
+        "offset",
+        "beam_error",
+        "omega",
+        "b_HI",
+        "b_g",
+        "NL",
+        "FoGh",
+        "FoGg",
+        "M_10",
+    ]
+
+    _param_spec = {
+        "offset": {
+            "fixed": False,
+            "value": 0.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -0.8,
+                "high": 0.8,
+            },
+        },
+        "beam_error": {
+            "fixed": True,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.5,
+                "high": 1.5,
+            },
+        },
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -10.0,
+                "high": 10.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 10.0,
+            },
+        },
+        # This is the only parameter which is reasonably constrained.
+        # Use scale = 0.03 for QSO, 0.13 for LRG, and 0.10 for ELG.
+        "b_g": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Gaussian",
+            "kwargs": {
+                "loc": 1.00,
+                "scale": 0.03,
+            },
+        },
+        "NL": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "FoGg": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "M_10": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 20.0,
+            },
+        },
+    }
+
+    _template_class = signal.SignalTemplate
+    _template_kwargs = ("symmetrize", "reverse")
+
+    def __init__(
+        self,
+        pattern,
+        pol=None,
+        weight=None,
+        combine=True,
+        sort=True,
+        symmetrize=False,
+        derivs=None,
+        factor=1e6,
+        aliases=None,
+        *args,
+        **kwargs,
+    ):
+
+        if derivs is None:
+            derivs = {"lin": (-1.0, 1.0)}
+
+        if aliases is None:
+            aliases = {"shotnoise": "M_10", "lin": "NL"}
+
+        self._signal_template = self._template_class.load_from_stackfiles(
+            pattern,
+            pol=pol,
+            weight=weight,
+            combine=combine,
+            sort=sort,
+            symmetrize=symmetrize,
+            derivs=derivs,
+            factor=factor,
+            aliases=aliases,
+            **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
+        )
+
+        super().__init__(*args, **kwargs)
+
+    def model(self, theta, freq=None, transfer=None, pol_sel=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        offset = param_dict.pop("offset")
+        beam_error = param_dict.pop("beam_error")
+
+        model_init = self._signal_template.signal(**param_dict)[pol_sel]
+
+        if (model_init.ndim > 1) and (model_init.shape[0] > 1):
+            model_init[1] *= beam_error
+
+        model = utils.shift_and_convolve(
+            freq, model_init, offset=offset, kernel=transfer
+        )
+
+        return model
+
+
+class SimulationTemplateFoG(SimulationTemplate):
+    """Model based on templates from simulations convolved with a FoG damping kernel."""
+
+    param_name = [
+        "offset",
+        "beam_error",
+        "omega",
+        "b_HI",
+        "b_g",
+        "NL",
+        "FoGh",
+        "FoGg",
+        "M_10",
+    ]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -10.0,
+                "high": 10.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 10.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "FoGg": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+    }
+
+    _template_class = signal.SignalTemplateFoG
+    _template_kwargs = SimulationTemplate._template_kwargs + (
+        "convolutions",
+        "delay_range",
+    )
+
+
+class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
+    """Model based on templates from simulations convolved with a FoG damping kernel.
+
+    This uses an alternative parameterization of (Omega, Omega x b_HI, ...) compared to
+    the (Omega, b_HI, ...) parameterization used in the SimulationTemplate and
+    SimulationTemplateFoG models.
+    """
+
+    param_name = [
+        "offset",
+        "beam_error",
+        "omega",
+        "omega_b_HI",
+        "b_g",
+        "NL",
+        "FoGh",
+        "FoGg",
+        "M_10",
+    ]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "omega_b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+    }
+
+    def model(self, theta, freq=None, transfer=None, pol_sel=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        offset = param_dict.pop("offset")
+
+        omega_bHI = param_dict.pop("omega_b_HI")
+        param_dict["b_HI"] = omega_bHI * tools.invert_no_zero(param_dict["omega"])
+
+        model_init = self._signal_template.signal(**param_dict)[pol_sel]
+
+        model = utils.shift_and_convolve(
+            freq, model_init, offset=offset, kernel=transfer
+        )
+
+        return model
+
+
+class SimulationTemplateFoGTransformDualPol(SimulationTemplateFoG):
+
     param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    def __init__(self, pol, *args, **kwargs):
+
+        self.param_base = [par for par in self.param_name]
+        defaults = self.default_param_spec()
+
+        param_name = []
+        for pstr in pol:
+            for name in self.param_name:
+                key = f"{name}_{pstr}"
+                param_name.append(key)
+                kwargs[key] = kwargs.get(name, defaults[name])
+
+        self.param_name = param_name
+        self.pol = pol
+
+        super().__init__(pol=pol, *args, **kwargs)
+
+    def model(self, theta, freq=None, transfer=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = []
+        for pp, pol in enumerate(self.pol):
+
+            param_pol = {k: param_dict[f"{k}_{pol}"] for k in self.param_base}
+
+            offset = param_pol.pop("offset")
+
+            model_init = self._signal_template.signal(**param_pol)[pp]
+
+            model.append(
+                utils.shift_and_convolve(
+                    freq, model_init, offset=offset, kernel=transfer
+                )
+            )
+
+        return np.array(model)
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            ind_b_HI = self.param_name_fit.index(f"b_HI_{pol}")
+            newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            ind_b_HI = self.param_name_fit.index(f"b_HI_{pol}")
+            newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        meas = 0.0
+        for pol in self.pol:
+            ind_omega = self.param_name_fit.index(f"omega_{pol}")
+            meas -= np.log(np.abs(theta[..., ind_omega]))
+
+        return meas
+
+
+class SimulationTemplateFoGTransformSplit(SimulationTemplateFoG):
+
+    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+
+    def __init__(self, splits, restricted=True, *args, **kwargs):
+
+        self.param_base = [par for par in self.param_name]
+        defaults = self.default_param_spec()
+
+        usplits = np.unique(splits)
+
+        if not restricted:
+            param_name = []
+            for split in usplits:
+                for name in self.param_name:
+                    key = f"{name}_{split}"
+                    param_name.append(key)
+                    kwargs[key] = kwargs.get(name, defaults[name])
+
+            self.param_name = param_name
+
+        self.restricted = restricted
+        self.splits = np.array(splits)
+        self.index_splits = {
+            name: np.flatnonzero(self.splits == name) for name in usplits
+        }
+
+        print(self.param_name)
+        print(self.index_splits)
+
+        super().__init__(*args, **kwargs)
+
+    def model(self, theta, freq=None, transfer=None):
+
+        if freq is None:
+            freq = self.freq
+
+        if transfer is None:
+            transfer = self.transfer
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = np.zeros((self.splits.size, freq.size), dtype=np.float64)
+
+        for name, index in self.index_splits.items():
+
+            param_split = {}
+            for k in self.param_base:
+                lookup = f"{k}_{name}" if not self.restricted else k
+                param_split[k] = param_dict[lookup]
+
+            offset = param_split.pop("offset")
+
+            model_init = self._signal_template.signal(**param_split)
+
+            model[index] = utils.shift_and_convolve(
+                freq, model_init, offset=offset, kernel=transfer
+            )
+
+        return model
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+
+        if self.restricted:
+            index = [
+                (
+                    self.param_name_fit.index(f"omega"),
+                    self.param_name_fit.index(f"b_HI"),
+                )
+            ]
+        else:
+            index = [
+                (
+                    self.param_name_fit.index(f"omega_{sp}"),
+                    self.param_name_fit.index(f"b_HI_{sp}"),
+                )
+                for sp in self.index_splits.keys()
+            ]
+
+        for aa, bb in index:
+            newsample[..., bb] = sample[..., aa] * sample[..., bb]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI basis."""
+
+        newsample = sample.copy()
+
+        if self.restricted:
+            index = [
+                (
+                    self.param_name_fit.index(f"omega"),
+                    self.param_name_fit.index(f"b_HI"),
+                )
+            ]
+        else:
+            index = [
+                (
+                    self.param_name_fit.index(f"omega_{sp}"),
+                    self.param_name_fit.index(f"b_HI_{sp}"),
+                )
+                for sp in self.index_splits.keys()
+            ]
+
+        for aa, bb in index:
+            newsample[..., bb] = sample[..., bb] / sample[..., aa]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+
+        if self.restricted:
+            index = [self.param_name_fit.index(f"omega")]
+        else:
+            index = [
+                self.param_name_fit.index(f"omega_{sp}")
+                for sp in self.index_splits.keys()
+            ]
+
+        meas = 0.0
+        for aa in index:
+            meas -= np.log(np.abs(theta[..., aa]))
+
+        return meas
+
+
+class SimulationTemplateFoGTransform(SimulationTemplateFoG):
+    """An FoG damped template that samples in a decorrelated basis.
+
+    This uses an alternative basis replacing various parameters to decorrelate the
+    chains:
+
+    - `b_HI -> omega_b_HI = omega * b_HI`
+    - `FoGh -> FoG+ = log(FoGh * FoGg) / 2`
+    - `FoGg -> FoG- = log(FoGh / FoGg) / 2
+
+    However, the chains are returned (and priors applied) in the original basis.
+
+    Parameters
+    ----------
+    pattern
+        Glob pattern to find the signal template modes.
+    data_reverse
+        Reverse the frequency offset axis in the data before evaluating the likelihood.
+        This is useful for testing issues in the signal generation.
+    """
+
+    def __init__(self, pattern: str, data_reverse: bool = False, *args, **kwargs):
+        self._data_reverse = data_reverse
+        logger.debug(f"Reversing the data before sampling: {self._data_reverse}")
+        super().__init__(pattern, *args, **kwargs)
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
+
+        newsample = sample.copy()
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+
+        newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
+
+        # Transform to FoG+ and FoG- parameters for sampling
+        newsample[..., 5] = 0.5 * np.log(sample[..., 5] * sample[..., 6])
+        newsample[..., 6] = 0.5 * np.log(sample[..., 5] / sample[..., 6])
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
+
+        newsample = sample.copy()
+
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+
+        newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
+
+        # Transform back to FoGh and FoGg
+        newsample[..., 5] = np.exp(sample[..., 5] + sample[..., 6])
+        newsample[..., 6] = np.exp(sample[..., 5] - sample[..., 6])
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        """The measure for the coordinate transform."""
+
+        # The measure for the transform for Omega_b_HI
+        ind_omega = self.param_name_fit.index(f"omega")
+        measure = -np.log(np.abs(theta[..., ind_omega]))
+
+        # The log-measure for the transform for FoG+/- transform: 2 * FoGh * FoGg
+        measure = 2 * theta[..., 5] + np.log(2.0)
+
+        return measure
+
+    def log_likelihood(self, theta):
+        """Evaluate the log of the likelihood.
+
+        Parameters
+        ----------
+        theta : list
+            Values for the fit parameters.
+
+        Returns
+        -------
+        logL : float
+            Logarithm of the likelihood function.
+        """
+
+        theta_all = self.get_all_params(theta)
+
+        mdl = self.model(theta_all)
+
+        if self._data_reverse:
+            # Reverse the frequency axis
+            data = self.data[..., ::-1]
+            npol, nfreq = data.shape
+            inv_cov = self.inv_cov.reshape(npol, nfreq, npol, nfreq)
+            inv_cov = inv_cov[:, ::-1, :, ::-1].reshape(npol * nfreq, npol * nfreq)
+        else:
+            data = self.data
+            inv_cov = self.inv_cov
+
+        residual = np.ravel(data - mdl)
+
+        return -0.5 * np.matmul(residual.T, np.matmul(inv_cov, residual))
+
+
+class AutoConstant(Model):
+    """Power spectrum model that's a constant in k with a free amplitude."""
+
+    param_name = ["amp"]
+
+    _param_spec = {
+        "amp": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 10.0,
+            },
+        },
+    }
+
+    def model(self, theta, k1D=None, transfer=None, template=None, pol_sel=None):
+        """Evaluate constant-power-spectrum model.
+
+        Parameters
+        ----------
+        theta : [amp]
+            One-element list containing the model amplitude.
+        k1D : np.ndarray[npol, nk]
+            K values for each pol.  If not provided, method will use
+            the `k1D` attribute.
+        transfer, template, pol_sel
+            Unused arguments.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if k1D is None:
+            k1D = self.k1D
+
+        amp = theta[0]
+
+        model = np.full(k1D.shape, amp)
+
+        return model
+
+
+class AutoScaledTemplate(Model):
+    """Scaled power spectrum template model."""
+
+    param_name = ["amp"]
+
+    _param_spec = {
+        "amp": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 10.0,
+            },
+        },
+    }
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model consisting of a scaled power spectrum template.
+
+        The power spectrum template is simply multiplied by a free amplitude.
+
+        Parameters
+        ----------
+        theta : [amp]
+            One-element list containing the template amplitude.
+        k1D : np.ndarray[npol,nk]
+            K values for each pol. (Not actually used in model evaluation.)
+        template : np.ndarray[..., nk]
+            Signal template.
+        transfer, pol_sel
+            Unused arguments.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if k1D is None:
+            k1D = self.k1D
+
+        if template is None:
+            template = self.template
+
+        amp = theta[0]
+
+        model = amp * self._re(template)
+
+        return model
+
+
+class AutoSimulationTemplate1D(Model):
+    """Linear combination of 1D power spectrum templates from simulations.
+
+    Note that Finger-of-God damping is *not* varied in this class:
+    the `FoGh` parameter have no effect, and the `FoGs` parameter just
+    switches between the alphaFoG=1 shot noise template (if `FoGs != 0`)
+    or the alphaFoG=0 template (if `FoGs == 0`). To force the no-FoG
+    form of shot noise, keep the `FoGs` parameter fixed to zero.
+
+    The derived class `AutoSimulationTemplate1DFoG` should be used to
+    vary Finger-of-God damping.
+    """
+
+    param_name = ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 5.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+        "NL": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -1.0,
+                "high": 7.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "SN": {
+            "fixed": True,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+        "FoGs": {
+            "fixed": True,
+            "value": 0.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 4.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate1D
+    _template_kwargs = ()
+
+    def __init__(
+        self,
+        pattern,
+        clustering_filename_pattern="*.h5",
+        shotnoise_filename_pattern="*.h5",
+        pol=None,
+        combine=True,
+        sort=False,
+        factor=1,
+        nbins=7,
+        logbins=True,
+        *args,
+        **kwargs,
+    ):
+
+        super().__init__(*args, **kwargs)
+
+        self._signal_template = self._template_class.load_from_ps1Dfiles(
+            pattern,
+            clustering_filename_pattern=clustering_filename_pattern,
+            shotnoise_filename_pattern=shotnoise_filename_pattern,
+            pol=pol,
+            combine=combine,
+            factor=factor,
+            nbins=nbins,
+            logbins=logbins,
+            force_real=self.force_real,
+            **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
+        )
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[6]
+            Parameter values, ordered as
+            ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"].
+        k1D, template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+
+        return model
+
+
+class AutoSimulationTemplate1DFoG(AutoSimulationTemplate1D):
+    """Power spectrum model with varying multiplicative FoG damping.
+
+    To vary FoG damping in the clustering signal but use the no-FoG
+    form of the shot noise template, keep the `FoGs` paramter fixed
+    to 0 but vary the `SN` parameter.
+    """
+
+    param_name = ["omega", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate1DFoG
+
+
+class AutoSimulationTemplate1DFoGTransform(AutoSimulationTemplate1DFoG):
+    """Power spectrum model with FoG and more efficient sampling.
+
+    This uses an alternative basis that makes the following replacement:
+
+    - `b_HI -> omega_b_HI = omega * b_HI`
+
+    However, the chains are returned (and priors applied) in the original basis.
+    """
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega*b basis."""
+
+        newsample = sample.copy()
+        newsample[..., 1] = sample[..., 0] * sample[..., 1]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, b basis."""
+
+        newsample = sample.copy()
+        newsample[..., 1] = sample[..., 1] / sample[..., 0]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        """The measure for the coordinate transform."""
+
+        # The measure for the transform for Omega*b
+        measure = -np.log(np.abs(theta[..., 0]))
+
+        return measure
+
+
+class AutoSimulationTemplate1D_Omega2(AutoSimulationTemplate1D):
+    """Version of AutoSimulationTemplate1D that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -400.0,
+                "high": 400.0,
+            },
+        }
+    }
+
+    _template_class = signal.AutoSignalTemplate1D
+    _template_kwargs = ()
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[6]
+            Parameter values, ordered as
+            ["omega^2", "b_HI", "NL", "FoGh", "SN", "FoGs"].
+        k1D, template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        omega2 = param_dict.pop("omega^2")
+        # Need to allow omega to be complex so that omega^2 can be negative
+        # when model is evaluated
+        param_dict["omega"] = (omega2 + 0.0j) ** 0.5
+
+        model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+
+        return model
+
+
+class AutoSimulationTemplate1DFoG_Omega2(AutoSimulationTemplate1D_Omega2):
+    """Version of AutoSimulationTemplate1DFoG that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "SN", "FoGs"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -400.0,
+                "high": 400.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": 0.0,
+                "high": 8.0,
+            },
+        },
+    }
+
+    _template_class = signal.AutoSignalTemplate1DFoG
+
+
+class AutoSimulationTemplate2Dto1D(Model):
+    """Linear combination of 2D power spectrum templates from simulations."""
+
+    param_name = ["omega", "b_HI", "NL", "FoGh", "M_10"]
 
     _param_spec = {
         "offset": {
@@ -482,17 +1622,6 @@ class SimulationTemplate(Model):
                 "high": 8.0,
             },
         },
-        # This is the only parameter which is reasonably constrained.
-        # Use scale = 0.03 for QSO, 0.13 for LRG, and 0.10 for ELG.
-        "b_g": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Gaussian",
-            "kwargs": {
-                "loc": 1.00,
-                "scale": 0.03,
-            },
-        },
         "NL": {
             "fixed": False,
             "value": 1.0,
@@ -503,15 +1632,6 @@ class SimulationTemplate(Model):
             },
         },
         "FoGh": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": 0.0,
-                "high": 4.0,
-            },
-        },
-        "FoGg": {
             "fixed": False,
             "value": 1.0,
             "prior": "Uniform",
@@ -531,64 +1651,91 @@ class SimulationTemplate(Model):
         },
     }
 
+    _template_class = signal.AutoSignalTemplate2D
+    _template_kwargs = ()
+
     def __init__(
         self,
         pattern,
+        filename_pattern=None,
         pol=None,
         weight=None,
+        signal_mask=None,
         combine=True,
-        sort=True,
+        sort=False,
         derivs=None,
-        factor=1e3,
+        factor=1,
         aliases=None,
+        nbins=10,
+        logbins=True,
+        slow_1d_binning=False,
         *args,
-        **kwargs
+        **kwargs,
     ):
-
-        if aliases is None:
-            aliases = dict(shotnoise="M_10")
-
-        self._signal_template = signal.SignalTemplate.load_from_stackfiles(
-            pattern,
-            pol=pol,
-            weight=weight,
-            combine=combine,
-            sort=sort,
-            derivs=derivs,
-            factor=factor,
-            aliases=aliases,
-        )
 
         super().__init__(*args, **kwargs)
 
-    def model(self, theta, freq=None, transfer=None, pol_sel=None):
+        if derivs is None:
+            derivs = {"lin": (-1.0, 1.0)}
 
-        if freq is None:
-            freq = self.freq
+        if aliases is None:
+            aliases = {"shotnoise": "M_10", "lin": "NL"}
 
-        if transfer is None:
-            transfer = self.transfer
+        self.slow_1d_binning = slow_1d_binning
+
+        self._signal_template = self._template_class.load_from_ps2Dfiles(
+            pattern,
+            filename_pattern=filename_pattern,
+            pol=pol,
+            weight=weight,
+            signal_mask=signal_mask,
+            combine=combine,
+            derivs=derivs,
+            factor=factor,
+            aliases=aliases,
+            nbins=nbins,
+            logbins=logbins,
+            force_real=self.force_real,
+            **{k: v for k, v in kwargs.items() if k in self._template_kwargs},
+        )
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[5]
+            Parameter values, ordered as ["omega", "b_HI", "NL", "FoGh", "M_10"].
+        k1D : np.ndarray[npol,nk]
+            K values for each pol. (Not actually used in model evaluation.)
+        template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
 
         if pol_sel is None:
             pol_sel = self.pol_sel
 
         param_dict = {k: v for k, v in zip(self.param_name, theta)}
 
-        offset = param_dict.pop("offset")
-
-        model_init = self._signal_template.signal(**param_dict)[pol_sel]
-
-        model = utils.shift_and_convolve(
-            freq, model_init, offset=offset, kernel=transfer
-        )
+        if self.slow_1d_binning:
+            model = self._signal_template.signal_1D_slow(**param_dict)[pol_sel]
+        else:
+            model = self._signal_template.signal_1D(**param_dict)[pol_sel]
 
         return model
 
 
-class SimulationTemplateFoG(SimulationTemplate):
-    """Model based on templates from simulations convolved with a FoG damping kernel."""
+class AutoSimulationTemplate2Dto1DFoG(AutoSimulationTemplate2Dto1D):
+    """Power spectrum model with varying FoG damping via multiplicative kernel."""
 
-    param_name = ["offset", "omega", "b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
+    param_name = ["omega", "b_HI", "NL", "FoGh", "M_10"]
 
     _param_spec = {
         "omega": {
@@ -618,7 +1765,106 @@ class SimulationTemplateFoG(SimulationTemplate):
                 "high": 8.0,
             },
         },
-        "FoGg": {
+    }
+
+    _template_class = signal.AutoSignalTemplate2DFoG
+    _template_kwargs = AutoSimulationTemplate2Dto1D._template_kwargs + (
+        "convolutions",
+        "kpara_range",
+    )
+
+
+class AutoSimulationTemplate2Dto1D_Omega2(AutoSimulationTemplate2Dto1D):
+    """Version of AutoSimulationTemplate2Dto1D that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "M_10"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -25.0,
+                "high": 25.0,
+            },
+        }
+    }
+
+    _template_class = signal.AutoSignalTemplate2D
+    _template_kwargs = ()
+
+    def model(self, theta, k1D=None, template=None, transfer=None, pol_sel=None):
+        """Evaluate the model.
+
+        Parameters
+        ----------
+        theta : np.ndarray[5]
+            Parameter values, ordered as ["omega^2", "b_HI", "NL", "FoGh", "M_10"].
+        k1D : np.ndarray[npol,nk]
+            K values for each pol. (Not actually used in model evaluation.)
+        template, transfer
+            Unused arguments.
+        pol_sel : np.ndarray
+            Indices of pols to evaluate for.
+
+        Returns
+        -------
+        model : np.ndarray[..., nk]
+            Model for the signal.
+        """
+
+        if pol_sel is None:
+            pol_sel = self.pol_sel
+
+        param_dict = {k: v for k, v in zip(self.param_name, theta)}
+
+        omega2 = param_dict.pop("omega^2")
+        # Need to allow omega to be complex so that omega^2 can be negative
+        # when model is evaluated
+        param_dict["omega"] = (omega2 + 0.0j) ** 0.5
+
+        if self.slow_1d_binning:
+            model = self._signal_template.signal_1D_slow(**param_dict)[pol_sel]
+        else:
+            model = self._signal_template.signal_1D(**param_dict)[pol_sel]
+
+        return model
+
+
+class AutoSimulationTemplate2Dto1DFoG_Omega2(AutoSimulationTemplate2Dto1D_Omega2):
+    """Version of AutoSimulationTemplate2Dto1DFoG that samples in Omega_HI^2.
+
+    This uses a uniform prior on omega^2. However, this class is mostly
+    intended for chi^2 minimization, for which the prior doesn't matter.
+    """
+
+    param_name = ["omega^2", "b_HI", "NL", "FoGh", "M_10"]
+
+    _param_spec = {
+        "omega^2": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -25.0,
+                "high": 25.0,
+            },
+        },
+        "b_HI": {
+            "fixed": False,
+            "value": 1.0,
+            "prior": "Uniform",
+            "kwargs": {
+                "low": -5.0,
+                "high": 5.0,
+            },
+        },
+        "FoGh": {
             "fixed": False,
             "value": 1.0,
             "prior": "Uniform",
@@ -629,94 +1875,8 @@ class SimulationTemplateFoG(SimulationTemplate):
         },
     }
 
-    def __init__(
-        self,
-        pattern,
-        pol=None,
-        weight=None,
-        combine=True,
-        sort=True,
-        derivs=None,
-        convolutions=None,
-        delay_range=None,
-        factor=1e3,
-        aliases=None,
-        *args,
-        **kwargs
-    ):
-
-        if aliases is None:
-            aliases = dict(shotnoise="M_10")
-
-        self._signal_template = signal.SignalTemplateFoG.load_from_stackfiles(
-            pattern,
-            pol=pol,
-            weight=weight,
-            combine=combine,
-            sort=sort,
-            derivs=derivs,
-            convolutions=convolutions,
-            delay_range=delay_range,
-            factor=factor,
-            aliases=aliases,
-        )
-
-        super(SimulationTemplate, self).__init__(*args, **kwargs)
-
-
-class SimulationTemplateFoGAltParam(SimulationTemplateFoG):
-    """Model based on templates from simulations convolved with a FoG damping kernel.
-
-    This uses an alternative parameterization of (Omega, Omega x b_HI, ...) compared to
-    the (Omega, b_HI, ...) parameterization used in the SimulationTemplate and
-    SimulationTemplateFoG models.
-    """
-
-    param_name = ["offset", "omega", "omega b_HI", "b_g", "NL", "FoGh", "FoGg", "M_10"]
-
-    _param_spec = {
-        "omega": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": -5.0,
-                "high": 5.0,
-            },
-        },
-        "omega b_HI": {
-            "fixed": False,
-            "value": 1.0,
-            "prior": "Uniform",
-            "kwargs": {
-                "low": -5.0,
-                "high": 5.0,
-            },
-        },
-    }
-
-    def model(self, theta, freq=None, transfer=None, pol_sel=None):
-
-        if freq is None:
-            freq = self.freq
-
-        if transfer is None:
-            transfer = self.transfer
-
-        if pol_sel is None:
-            pol_sel = self.pol_sel
-
-        param_dict = {k: v for k, v in zip(self.param_name, theta)}
-
-        offset = param_dict.pop("offset")
-
-        omega_bHI = param_dict.pop("omega b_HI")
-        param_dict["b_HI"] = omega_bHI * tools.invert_no_zero(param_dict["omega"])
-
-        model_init = self._signal_template.signal(**param_dict)[pol_sel]
-
-        model = utils.shift_and_convolve(
-            freq, model_init, offset=offset, kernel=transfer
-        )
-
-        return model
+    _template_class = signal.AutoSignalTemplate2DFoG
+    _template_kwargs = AutoSimulationTemplate2Dto1D._template_kwargs + (
+        "convolutions",
+        "kpara_range",
+    )

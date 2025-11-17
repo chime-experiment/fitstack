@@ -1,8 +1,56 @@
 """Containers for storing data products and fit results."""
 
+from typing import ClassVar
+
 import numpy as np
 
-from draco.core.containers import *
+from draco.core.containers import (
+    ContainerBase,
+    FrequencyStackByPol,
+    MockFrequencyStackByPol,
+    Stack3D,
+    PowerSpectrum1D,
+    PowerSpectrum2D,
+)
+
+
+class MockContainer(ContainerBase):
+    """Container where some datasets have a mock axis and others do not."""
+
+    _non_mock_datasets = ()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attrs["non_mock_datasets"] = self._non_mock_datasets
+
+    @property
+    def non_mock_datasets(self):
+        """Get the list of datasets without a mock axis."""
+        return self.attrs["non_mock_datasets"]
+
+
+class MockStack3D(MockFrequencyStackByPol, Stack3D):
+    """Container for holding a frequency stack split by pol for multiple mock catalogs.
+
+    Adds a `mock` axis as the first dimension of each dataset.
+    """
+
+    _axes = ("mock",)
+
+    _dataset_spec = {
+        "stack": {
+            "axes": ["mock", "pol", "delta_ra", "delta_dec", "freq"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "weight": {
+            "axes": ["mock", "pol", "delta_ra", "delta_dec", "freq"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
 
 
 class StackSet1D(FrequencyStackByPol):
@@ -59,6 +107,125 @@ class StackSet3D(Stack3D):
     }
 
 
+class PowerSpectrumSet1D(PowerSpectrum1D):
+    """Container for data required to perform a model fit with a 1d power spectrum."""
+
+    _axes = ("mock",)
+
+    _dataset_spec = {
+        "mock": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "template": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": False,
+            "distributed": False,
+        },
+    }
+
+
+class MockPowerSpectrum1D(PowerSpectrum1D, MockContainer):
+    """Container for multiple 1d power spectra.
+
+    This will most commonly be used to store several noise power spectra,
+    for use in computing a covariance matrix. The spectra will be indexed
+    by the `mock` axis, to carry over conventions from the stacking analysis.
+
+    The `spectrum` and `samp_var` datasets will vary from mock to mock.
+    `var` may be the same for every mock, but we allow for it to vary.
+    The other `PowerSpectrum1D` datasets (`neff`, and `k1D`) will
+    be the same for every mock, so we only redefine them here to ensure
+    that they're not distributed by default.
+    """
+
+    _axes = ("mock",)
+
+    _non_mock_datasets = ("neff",)
+
+    _dataset_spec: ClassVar = {
+        "spectrum": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.complex128,
+            "initialise": True,
+            "distributed": False,
+        },
+        "samp_var": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "var": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "neff": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "k1D": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
+
+
+class MockPowerSpectrum2D(PowerSpectrum2D, MockContainer):
+    """Container for multiple 2d power spectra.
+
+    This will most commonly be used to store several noise power spectra,
+    for use in computing a covariance matrix. The spectra will be indexed
+    by the `mock` axis, to carry over conventions from the stacking analysis.
+
+    The `spectrum` dataset will vary from mock to mock. `weight` and `neff`
+    may be the same for every mock, but we allow for them to vary. `mask`
+    will be the same for every mock, so we only redefine it so that it's
+    not distributed by default.
+    """
+
+    _axes = ("mock",)
+
+    _non_mock_datasets = ("mask",)
+
+    _dataset_spec: ClassVar = {
+        "spectrum": {
+            "axes": ["mock", "pol", "delay", "uv_dist"],
+            "dtype": np.complex128,
+            "initialise": True,
+            "distributed": False,
+        },
+        "weight": {
+            "axes": ["mock", "pol", "delay", "uv_dist"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "neff": {
+            "axes": ["mock", "pol", "delay", "uv_dist"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+            "distributed_axis": "delay",
+        },
+        "mask": {
+            "axes": ["pol", "delay", "uv_dist"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
+
+
 class MCMCFit(ContainerBase):
     """Base container for the results of a model fit."""
 
@@ -79,7 +246,7 @@ class MCMCFit(ContainerBase):
         },
         "fixed": {
             "axes": ["param"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
@@ -198,13 +365,13 @@ class MCMCFit1D(MCMCFit, StackSet1D):
         },
         "freq_flag": {
             "axes": ["freq"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
         "flag": {
             "axes": ["x"],
-            "dtype": np.bool,
+            "dtype": bool,
             "initialise": True,
             "distributed": False,
         },
@@ -262,6 +429,158 @@ class MCMCFit3D(MCMCFit, StackSet3D):
             "axes": ["pol", "pixel", "pixel"],
             "dtype": np.float64,
             "initialise": True,
+            "distributed": False,
+        },
+    }
+
+
+class MCMCFitPowerSpectrum1D(MCMCFit, PowerSpectrumSet1D):
+    """Container for a model fit to 1D power spectrum and all associated data."""
+
+    _axes = ("x",)
+
+    _dataset_spec = {
+        "cov": {
+            "axes": ["pol", "pol", "k", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "error": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "k_flag": {
+            "axes": ["k"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "flag": {
+            "axes": ["x"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "precision": {
+            "axes": ["x", "x"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "model_min_chisq": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "model_percentile": {
+            "axes": ["pol", "k", "percentile"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
+
+    @property
+    def ndof(self):
+        """Return the number of degrees of freedom."""
+        return np.sum(self.datasets["flag"][:]) - self.index_map["param"].size
+
+
+class ChisqTest(ContainerBase):
+    """Container for best-fit chi-squared results for stacking."""
+
+    _axes = ("mock", "restricted_param", "unrestricted_param")
+
+    _dataset_spec = {
+        "restricted_success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "restricted_chisq": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "restricted_param": {
+            "axes": ["mock", "restricted_param"],
+            "dtype": np.float64,
+            "initialise": False,
+            "distributed": False,
+        },
+        "unrestricted_success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "unrestricted_chisq": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "unrestricted_param": {
+            "axes": ["mock", "unrestricted_param"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+    }
+
+
+class ChisqPowerSpectrum1D(ContainerBase):
+    """Container for best-fit chi-squared results for 1d power spectrum."""
+
+    _axes = ("mock", "param", "pol", "k")
+
+    _dataset_spec = {
+        "success": {
+            "axes": ["mock"],
+            "dtype": bool,
+            "initialise": True,
+            "distributed": False,
+        },
+        "chisq_null": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "chisq_signal": {
+            "axes": ["mock"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "mock_bestfit_starting_point_idx": {
+            "axes": ["mock"],
+            "dtype": int,
+            "initialise": True,
+            "distributed": False,
+        },
+        "bestfit_param": {
+            "axes": ["mock", "param"],
+            "dtype": np.float64,
+            "initialise": True,
+            "distributed": False,
+        },
+        "mock_bestfit_models": {
+            "axes": ["mock", "pol", "k"],
+            "dtype": np.float64,
+            "initialize": False,
+            "distributed": False,
+        },
+        "data_bestfit_model": {
+            "axes": ["pol", "k"],
+            "dtype": np.float64,
+            "initialize": False,
             "distributed": False,
         },
     }
