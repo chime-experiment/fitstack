@@ -582,7 +582,6 @@ def powerspectrum1d_min_chisq_fit(
 
     # Save best-fit model prediction for data
     if save_bestfit_models:
-        # Save best-fit model prediction for data
         out.add_dataset("data_bestfit_model")
         out.datasets["data_bestfit_model"][:] = signal_model.model(
             signal_model.get_all_params(data_signal_bestfit_param)
