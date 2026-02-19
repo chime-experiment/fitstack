@@ -378,6 +378,7 @@ def powerspectrum1d_min_chisq_fit(
     force_real=True,
     add_mock_to_data=None,
     center_mocks_on_data=False,
+    center_mocks_on_model_params=None,
     save_bestfit_models=False,
     use_LOO_covariance=False,
     use_LOO_hartlap=True,
@@ -444,6 +445,10 @@ def powerspectrum1d_min_chisq_fit(
         Primarily used for determining the effective number of degrees of
         freedom in the model, centered on the region of parameter space
         inhabited by the data. Default: False.
+    center_mocks_on_model_params : np.ndarray[nparam], optional
+        Add signal power spectrum determined by these model parameters to each mock.
+        Only one of `center_mocks_on_data` and `center_mocks_on_model_params`
+        can be specified. Default: None.
     save_bestfit_models : bool, optional
         Whether to save best-fit model evaluations for data and each mock, as
         datasets in output container. Default: False.
@@ -481,6 +486,12 @@ def powerspectrum1d_min_chisq_fit(
 
     def _re(x):
         return np.real(x) if force_real else x
+
+    if center_mocks_on_data and center_mocks_on_model_params is not None:
+        raise RuntimeError(
+            "Only one of center_mocks_on_data and center_mocks_on_model_params"
+            " can be set"
+        )
 
     if options is None:
         options = {}
@@ -546,9 +557,22 @@ def powerspectrum1d_min_chisq_fit(
 
     data_signal_bestfit_param = resd.x
 
+    # If user has specified model parameters for data-centering,
+    # replace stored best-fit parameters with these values.
+    if center_mocks_on_model_params is not None:
+        data_signal_bestfit_param = center_mocks_on_model_params
+
+    # Set centering flag
+    if center_mocks_on_data or center_mocks_on_model_params is not None:
+        center_mocks = True
+    else:
+        center_mocks = False
+
     # Save results, along with data itself, to output container
     out.attrs["data_signal_success"] = resd.success
-    out.attrs["data_signal_chisq"] = 2.0 * signal_model.negative_log_likelihood(resd.x)
+    out.attrs["data_signal_chisq"] = 2.0 * signal_model.negative_log_likelihood(
+        data_signal_bestfit_param
+    )
     out.attrs["data_signal_bestfit_param"] = data_signal_bestfit_param
     out.attrs["data"] = fit_kwargs["data"][:]
     out.attrs["data_bestfit_starting_point_idx"] = bestfit_starting_point_idx
@@ -595,7 +619,7 @@ def powerspectrum1d_min_chisq_fit(
 
         # Update models to consider mock data
         fit_kwargs["data"] = _re(mock_data[mm]).copy()
-        if center_mocks_on_data:
+        if center_mocks:
             fit_kwargs["data"] += signal_model.model(
                 signal_model.get_all_params(data_signal_bestfit_param)
             )
@@ -648,7 +672,7 @@ def powerspectrum1d_min_chisq_fit(
         # Save chi^2 for null model and mock.
         # If mocks are data-centered, null model is best-fit signal model for data.
         # If mocks are not data-centered, null model is no-signal model.
-        if center_mocks_on_data:
+        if center_mocks:
             chisq_null[mm] = 2.0 * signal_model.negative_log_likelihood(
                 data_signal_bestfit_param
             )
@@ -846,6 +870,7 @@ class PowerSpectrum1DMinChisqFit(task.SingleTask):
     force_real = config.Property(proptype=bool)
     add_mock_to_data = config.Property(proptype=int)
     center_mocks_on_data = config.Property(proptype=bool)
+    center_mocks_on_model_params = config.Property(proptype=list)
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
@@ -923,6 +948,7 @@ class PowerSpectrum1DMinChisqFit_Split(PowerSpectrum1DMinChisqFit):
     force_real = config.Property(proptype=bool)
     add_mock_to_data = config.Property(proptype=int)
     center_mocks_on_data = config.Property(proptype=bool)
+    center_mocks_on_model_params = config.Property(proptype=list)
     save_bestfit_models = config.Property(proptype=bool)
     use_LOO_covariance = config.Property(proptype=bool)
     use_LOO_hartlap = config.Property(proptype=bool)
