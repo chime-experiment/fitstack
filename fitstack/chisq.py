@@ -829,8 +829,8 @@ def powerspectrum1d_min_chisq_fit(
         signal_chi2_at_amplitude, signal_chi2_min + 1.0, 1.0, 0.0, 5.0
     )
 
-    # Detection significance is Delta(amp)/amp.
-    # Avearge these values computed with low and high values
+    # Detection significance (S/N) is amp/Delta(amp).
+    # Average these values computed with low and high values
     # of amplitude
     data_nsigmas_ampfit_lo = 1.0 / (bf_amp_hi - 1.0)
     data_nsigmas_ampfit_hi = 1.0 / (1.0 - bf_amp_lo)
