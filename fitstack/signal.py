@@ -553,6 +553,9 @@ class SignalTemplateFoG(SignalTemplate):
         # convolve the signal by
         for name, (_, x0) in self._convolutions.items():
 
+            # Fetch convolution scale
+            scale0 = self._convolution_scale[name][sbcast]
+
             # Get aliased name of parameter and parameter value
             name = self._aliases.get(name, name)
             if name not in kwargs:
