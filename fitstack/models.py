@@ -1113,8 +1113,11 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
         newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
 
         # Transform to FoG+ and FoG- parameters for sampling
-        newsample[..., 5] = 0.5 * np.log(sample[..., 5] * sample[..., 6])
-        newsample[..., 6] = 0.5 * np.log(sample[..., 5] / sample[..., 6])
+        ind_FoGh = self.param_name_fit.index("FoGh")
+        ind_FoGg = self.param_name_fit.index("FoGg")
+        newsample[..., ind_FoGh] = 0.5 * np.log(sample[..., ind_FoGh] * sample[..., ind_FoGg])
+        newsample[..., ind_FoGg] = 0.5 * np.log(sample[..., ind_FoGh] / sample[..., ind_FoGg])
+
 
         return newsample
 
@@ -1129,8 +1132,10 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
         newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
 
         # Transform back to FoGh and FoGg
-        newsample[..., 5] = np.exp(sample[..., 5] + sample[..., 6])
-        newsample[..., 6] = np.exp(sample[..., 5] - sample[..., 6])
+        ind_FoGh = self.param_name_fit.index("FoGh")
+        ind_FoGg = self.param_name_fit.index("FoGg")
+        newsample[..., ind_FoGh] = np.exp(sample[..., ind_FoGh] + sample[..., ind_FoGg])
+        newsample[..., ind_FoGg] = np.exp(sample[..., ind_FoGh] - sample[..., ind_FoGg])
 
         return newsample
 
@@ -1141,8 +1146,9 @@ class SimulationTemplateFoGTransform(SimulationTemplateFoG):
         ind_omega = self.param_name_fit.index(f"omega")
         measure = -np.log(np.abs(theta[..., ind_omega]))
 
-        # The log-measure for the transform for FoG+/- transform: 2 * FoGh * FoGg
-        measure = 2 * theta[..., 5] + np.log(2.0)
+        # The log-measure for the transform for FoG+/- transform: log(FoG+)
+        ind_FoGh = self.param_name_fit.index("FoGh")
+        measure += 2 * theta[..., ind_FoGh] + np.log(2.0)
 
         return measure
 
