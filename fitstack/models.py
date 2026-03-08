@@ -1260,6 +1260,63 @@ class SimulationTemplateFoGTransformPaper(SimulationTemplateFoGTransform):
         return measure
 
 
+class SimulationTemplateFoGTransformOmegaOnly(SimulationTemplateFoGTransform):
+    """An FoG damped template that samples in a decorrelated basis.
+
+    This uses an alternative basis replacing various parameters to decorrelate the
+    chains:
+
+    - `b_HI -> omega_b_HI = omega * b_HI`
+
+    However, the chains are returned (and priors applied) in the original basis.
+
+    Parameters
+    ----------
+    pattern
+        Glob pattern to find the signal template modes.
+    data_reverse
+        Reverse the frequency offset axis in the data before evaluating the likelihood.
+        This is useful for testing issues in the signal generation.
+    """
+
+    def __init__(self, pattern: str, data_reverse: bool = False, *args, **kwargs):
+        self._data_reverse = data_reverse
+        logger.debug(f"Reversing the data before sampling: {self._data_reverse}")
+        super().__init__(pattern, *args, **kwargs)
+
+    def forward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
+
+        newsample = sample.copy()
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+
+        newsample[..., ind_b_HI] = sample[..., ind_omega] * sample[..., ind_b_HI]
+
+        return newsample
+
+    def backward_transform_sampler(self, sample: np.ndarray) -> np.ndarray:
+        """Transform to an Omega, Omega_b_HI, FoG+, FoG- basis."""
+
+        newsample = sample.copy()
+
+        ind_omega = self.param_name_fit.index(f"omega")
+        ind_b_HI = self.param_name_fit.index(f"b_HI")
+
+        newsample[..., ind_b_HI] = sample[..., ind_b_HI] / sample[..., ind_omega]
+
+        return newsample
+
+    def log_transform_measure(self, theta: np.ndarray) -> float:
+        """The measure for the coordinate transform."""
+
+        # The measure for the transform for Omega_b_HI
+        ind_omega = self.param_name_fit.index(f"omega")
+        measure = -np.log(np.abs(theta[..., ind_omega]))
+
+        return measure
+
+
 class AutoConstant(Model):
     """Power spectrum model that's a constant in k with a free amplitude."""
 
