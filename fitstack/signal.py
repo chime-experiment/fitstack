@@ -383,12 +383,18 @@ class SignalTemplateFoG(SignalTemplate):
         self._convolutions = convolutions
         self._delay_range = delay_range
 
+        self._FoG_scale_products = {}
+
         super().__init__(derivs=derivs, *args, **kwargs)
         logger.debug(f"Using convolutions: {self._convolutions}")
         logger.debug(f"Fitting delay range: {self._delay_range}")
 
     def _solve_scale(
-        self, base: FrequencyStackByPol, deriv: FrequencyStackByPol, alpha: float
+        self,
+        base: FrequencyStackByPol,
+        deriv: FrequencyStackByPol,
+        alpha: float,
+        key: str,
     ) -> np.ndarray:
         r"""Solve for the effective scale of the FoG damping.
 
@@ -414,12 +420,16 @@ class SignalTemplateFoG(SignalTemplate):
             Stacked signal from simulations with the FoG parameter perturbed.
         alpha
             The ratio of the FoG parameter for deriv relative to base.
+        key
+            Key for perturbed template.
 
         Returns
         -------
         scale : np.ndarray[npol,]
             The effective scale of the transfer function.
         """
+
+        self._FoG_scale_products[key] = {}
 
         nfreq = self.freq.size
         df = np.abs(self.freq[1] - self.freq[0])
@@ -469,7 +479,7 @@ class SignalTemplateFoG(SignalTemplate):
         # but we'll assume it's true and fit for an effective value of s.
         # To do so, we write
         #   ratio = H(tau,alpha*s)^2 / H(tau,s)^2
-        # and then solve for y, defined to be kpar^2 s^2.
+        # and then solve for y, defined to be tau^2 s^2.
         y = (ratio - 1.0) * tools.invert_no_zero(alpha**2 - ratio)
 
         # We then compute weights w that are equal to the inverse variance of y,
@@ -491,6 +501,14 @@ class SignalTemplateFoG(SignalTemplate):
             np.sum(w * tau2**2, axis=-1)
         )
 
+        # Same intermediate computations to dict, for external inspection if
+        # needed
+        self._FoG_scale_products[key]["tau"] = tau
+        self._FoG_scale_products[key]["mu_fft_base"] = mu_fft_base
+        self._FoG_scale_products[key]["mu_fft_deriv"] = mu_fft_deriv
+        self._FoG_scale_products[key]["y"] = y
+        self._FoG_scale_products[key]["w"] = w
+
         return np.sqrt(scale2)
 
     def _interpret_stacks(self, stacks: Dict[str, FrequencyStackByPol]):
@@ -511,7 +529,7 @@ class SignalTemplateFoG(SignalTemplate):
                 raise RuntimeError(f"Expected derivative {name} but could not load it.")
 
             # Determine the effective scale
-            scale = self._solve_scale(base, stacks[key], alpha)
+            scale = self._solve_scale(base, stacks[key], alpha, key)
             self._convolution_scale[name] = scale
 
     def convolve_pre_noncomp(self, signal: np.ndarray, **kwargs) -> np.ndarray:
