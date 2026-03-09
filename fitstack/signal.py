@@ -102,7 +102,7 @@ class SignalTemplate:
 
         # Find directories which match the right format
         for d in sorted(dirs):
-            mo = re.search(r"_compderiv-([^\/]+)", d)
+            mo = re.search(r"compderiv-([^\/]+)", d)
 
             if mo is None:
                 print(f"Directory {d} does not match expected format, rejecting")
